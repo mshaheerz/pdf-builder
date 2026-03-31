@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --editor-bg: #1e1e2e;
+  --surface: #282840;
+  --border: #3a3a5c;
+  --text: #e0e0ff;
+  --accent: #7c3aed;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--editor-bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  height: 100vh;
+  width: 100vw;
+}
+
+* { box-sizing: border-box; }
+
+/* Prevent text selection on canvas interactions */
+canvas { user-select: none; -webkit-user-select: none; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #5a5a7c; }
+
+/* Color input */
+input[type="color"] {
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
+input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+/* Range slider */
+input[type="range"] {
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid white;
+}
+
+/* Number input */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Select dropdown */
+select {
+  background-image: none;
+}
+
+/* Tooltip */
+button[title]:hover::after {
+  content: none; /* use native tooltip */
+}
+
+/* Smooth transitions */
+button { transition: all 0.15s ease; }

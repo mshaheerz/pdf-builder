@@ -1,0 +1,14 @@
+{
+  "name": "pdf-builder",
+  "private": true,
+  "scripts": {
+    "build:core": "cd packages/wasm && wasm-pack build --target web --out-dir pkg",
+    "build:sdk": "cd packages/sdk && pnpm build",
+    "build:playground": "cd packages/playground && pnpm build",
+    "dev": "cd packages/playground && pnpm dev",
+    "build": "turbo run build"
+  },
+  "devDependencies": {
+    "turbo": "^2.0.0"
+  }
+}
