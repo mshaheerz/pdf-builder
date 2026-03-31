@@ -2,6 +2,7 @@
 
 import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
 import { useDocumentStore, generateId, type Element, type ShapeElement } from '@/store/document-store';
+import { wrapText } from '@/store/table-utils';
 
 // ============================================================================
 // Image cache - prevents flicker
@@ -354,7 +355,22 @@ export function Canvas() {
       newW = Math.max(10, newW);
       newH = Math.max(10, newH);
 
-      useDocumentStore.getState().updateElement(activePage, el.id, { x: newX, y: newY, width: newW, height: newH });
+      const updates: any = { x: newX, y: newY, width: newW, height: newH };
+
+      // Proportionally scale table columns and rows
+      if (el.type === 'table') {
+        const tableEl = el as any;
+        const scaleX = newW / el.width;
+        const scaleY = newH / el.height;
+        if (tableEl.columns) {
+          updates.columns = tableEl.columns.map((c: any) => ({ ...c, width: c.width * scaleX }));
+        }
+        if (tableEl.rows) {
+          updates.rows = tableEl.rows.map((r: any) => ({ ...r, height: r.height * scaleY }));
+        }
+      }
+
+      useDocumentStore.getState().updateElement(activePage, el.id, updates);
       return;
     }
 
@@ -976,11 +992,10 @@ function renderText(ctx: CanvasRenderingContext2D, el: any, editingTextId: strin
     let found = false;
 
     for (let i = 0; i < lines.length && !found; i++) {
-      const lineStart = charCount;
       const lineLen = lines[i].length;
-      if (cursorPos <= lineStart + lineLen || i === lines.length - 1) {
-        const localPos = cursorPos - lineStart;
-        const textBefore = lines[i].slice(0, Math.max(0, Math.min(localPos, lineLen)));
+      if (cursorPos <= charCount + lineLen || i === lines.length - 1) {
+        const localPos = Math.max(0, cursorPos - charCount);
+        const textBefore = lines[i].slice(0, Math.min(localPos, lineLen));
         const beforeWidth = ctx.measureText(textBefore).width;
         let lineX = el.x;
         const lw = ctx.measureText(lines[i]).width;
@@ -990,7 +1005,11 @@ function renderText(ctx: CanvasRenderingContext2D, el: any, editingTextId: strin
         cursorY = el.y + i * lineHeight;
         found = true;
       }
-      charCount += lineLen + 1; // +1 for the space/wrap
+      charCount += lineLen;
+      // Skip characters between lines
+      while (charCount < content.length && charCount < cursorPos && (content[charCount] === ' ' || content[charCount] === '\n')) {
+        charCount++;
+      }
     }
 
     ctx.strokeStyle = '#7c3aed';
@@ -1263,15 +1282,43 @@ function renderTable(
   const isEditingThisTable = editingTableId === el.id;
   const totalW = columns.reduce((s: number, c: any) => s + c.width, 0);
   const scaleX = el.width / totalW;
+  const padding = 6;
+  const lineH = 14;
+  const minRowH = 30;
+
+  // Use pre-calculated row heights from the element data
+  // or calculate once if missing (fallback)
+  const rowHeights: number[] = rows.map((row: any, ri: number) => {
+    if (row.height !== undefined && row.height > 0) return row.height;
+    
+    // Fallback: calculate if height is missing
+    let maxH = minRowH;
+    const font = ri === 0 ? 'bold 11px sans-serif' : '11px sans-serif';
+    ctx.font = font;
+    for (let ci = 0; ci < row.cells.length && ci < columns.length; ci++) {
+      const cw = columns[ci].width * scaleX;
+      const content = row.cells[ci]?.content || '';
+      const lines = wrapText(ctx, content, cw - padding * 2);
+      const neededH = lines.length * lineH + padding * 2;
+      if (neededH > maxH) maxH = neededH;
+    }
+    return maxH;
+  });
+
+  const totalH = rowHeights.reduce((s, h) => s + h, 0);
 
   // White background
   ctx.fillStyle = '#FFFFFF';
-  ctx.fillRect(el.x, el.y, el.width, el.height);
+  ctx.fillRect(el.x, el.y, el.width, totalH);
 
   let yy = el.y;
   for (let ri = 0; ri < rows.length; ri++) {
     const row = rows[ri];
+    const rh = rowHeights[ri];
     let xx = el.x;
+    const font = ri === 0 ? 'bold 11px sans-serif' : '11px sans-serif';
+    ctx.font = font;
+
     for (let ci = 0; ci < row.cells.length && ci < columns.length; ci++) {
       const cell = row.cells[ci];
       const cw = columns[ci].width * scaleX;
@@ -1280,10 +1327,10 @@ function renderTable(
       // Cell background
       if (isEditingCell) {
         ctx.fillStyle = '#FFFFF0';
-        ctx.fillRect(xx, yy, cw, row.height);
+        ctx.fillRect(xx, yy, cw, rh);
       } else if (cell.background) {
         ctx.fillStyle = cell.background;
-        ctx.fillRect(xx, yy, cw, row.height);
+        ctx.fillRect(xx, yy, cw, rh);
       }
 
       // Cell border
@@ -1294,44 +1341,71 @@ function renderTable(
         ctx.strokeStyle = borderColor || '#D0D0D0';
         ctx.lineWidth = 0.5;
       }
-      ctx.strokeRect(xx, yy, cw, row.height);
+      ctx.strokeRect(xx, yy, cw, rh);
 
-      // Cell text
+      // Cell text (wrapped)
       const cellContent = cell.content || '';
       ctx.fillStyle = '#333';
-      ctx.font = ri === 0 ? 'bold 11px sans-serif' : '11px sans-serif';
-      ctx.textBaseline = 'middle';
+      ctx.font = font;
+      ctx.textBaseline = 'top';
 
       if (isEditingCell) {
-        // Render text with cursor
-        const textX = xx + 6;
-        const textY = yy + row.height / 2;
-        ctx.fillText(cellContent, textX, textY, cw - 12);
+        const lines = wrapText(ctx, cellContent, cw - padding * 2);
+        const textX = xx + padding;
+        let textY = yy + padding;
+        for (const line of lines) {
+          ctx.fillText(line, textX, textY, cw - padding * 2);
+          textY += lineH;
+        }
 
         // Blinking cursor
         if (blinkVisible) {
-          const beforeCursor = cellContent.slice(0, Math.min(editingCursorPos, cellContent.length));
-          const cursorX = textX + ctx.measureText(beforeCursor).width;
+          // Find cursor position in wrapped lines
+          let charsLeft = Math.min(editingCursorPos, cellContent.length);
+          let cursorLineIdx = 0;
+          let cursorLineOffset = 0;
+          let consumed = 0;
+          for (let li = 0; li < lines.length; li++) {
+            const lineLen = lines[li].length;
+            if (charsLeft <= consumed + lineLen || li === lines.length - 1) {
+              cursorLineIdx = li;
+              cursorLineOffset = Math.max(0, charsLeft - consumed);
+              break;
+            }
+            consumed += lineLen;
+            // Skip characters between wrapped lines (spaces, newlines)
+            while (consumed < cellContent.length && consumed < charsLeft && (cellContent[consumed] === ' ' || cellContent[consumed] === '\n')) {
+              consumed++;
+            }
+          }
+          const beforeCursor = lines[cursorLineIdx]?.slice(0, cursorLineOffset) || '';
+          const cursorX = xx + padding + ctx.measureText(beforeCursor).width;
+          const cursorY = yy + padding + cursorLineIdx * lineH;
           ctx.strokeStyle = '#7c3aed';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.moveTo(cursorX, yy + 4);
-          ctx.lineTo(cursorX, yy + row.height - 4);
+          ctx.moveTo(cursorX, cursorY);
+          ctx.lineTo(cursorX, cursorY + lineH);
           ctx.stroke();
         }
 
         // Placeholder
         if (!cellContent) {
           ctx.fillStyle = '#BBB';
-          ctx.fillText('Type...', textX, textY);
+          ctx.fillText('Type...', xx + padding, yy + padding);
         }
       } else if (cellContent) {
-        ctx.fillText(cellContent, xx + 6, yy + row.height / 2, cw - 12);
+        const lines = wrapText(ctx, cellContent, cw - padding * 2);
+        let textY = yy + padding;
+        for (const line of lines) {
+          ctx.fillText(line, xx + padding, textY, cw - padding * 2);
+          textY += lineH;
+        }
       }
 
       xx += cw;
     }
-    yy += row.height;
+    yy += rh;
   }
 }
 
@@ -1369,25 +1443,4 @@ function renderDrawing(ctx: CanvasRenderingContext2D, el: any) {
 // ============================================================================
 // TEXT WRAP
 // ============================================================================
-function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-  if (!text) return [''];
-  const paragraphs = text.split('\n');
-  const lines: string[] = [];
-
-  for (const para of paragraphs) {
-    if (!para) { lines.push(''); continue; }
-    const words = para.split(' ');
-    let currentLine = '';
-    for (const word of words) {
-      const test = currentLine ? currentLine + ' ' + word : word;
-      if (ctx.measureText(test).width > maxWidth && currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = test;
-      }
-    }
-    if (currentLine) lines.push(currentLine);
-  }
-  return lines.length ? lines : [''];
-}
+// wrapText is imported from '@/store/table-utils'

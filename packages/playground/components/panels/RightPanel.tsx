@@ -1,5 +1,6 @@
 'use client';
 
+import React from 'react';
 import { useDocumentStore, type Element } from '@/store/document-store';
 
 export function RightPanel() {
@@ -158,6 +159,7 @@ function TextProperties({ el, update }: { el: any; update: (u: any) => void }) {
   return (
     <>
       <SectionTitle>Text</SectionTitle>
+      <div className="text-[10px] text-gray-500 mb-1 italic">Double-click on canvas to edit inline</div>
       <textarea
         value={el.content}
         onChange={(e) => update({ content: e.target.value })}
@@ -236,6 +238,31 @@ function ShapeProperties({ el, update }: { el: any; update: (u: any) => void }) 
 }
 
 function ImageProperties({ el, update }: { el: any; update: (u: any) => void }) {
+  const [showUrlInput, setShowUrlInput] = React.useState(false);
+  const [imageUrl, setImageUrl] = React.useState('');
+  const [urlLoading, setUrlLoading] = React.useState(false);
+
+  const loadFromUrl = () => {
+    if (!imageUrl.trim()) return;
+    setUrlLoading(true);
+    const img = new window.Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      update({ src: imageUrl.trim() });
+      setShowUrlInput(false);
+      setImageUrl('');
+      setUrlLoading(false);
+    };
+    img.onerror = () => {
+      // Try using URL directly even if CORS fails
+      update({ src: imageUrl.trim() });
+      setShowUrlInput(false);
+      setImageUrl('');
+      setUrlLoading(false);
+    };
+    img.src = imageUrl.trim();
+  };
+
   return (
     <>
       <SectionTitle>Image</SectionTitle>
@@ -260,8 +287,28 @@ function ImageProperties({ el, update }: { el: any; update: (u: any) => void }) 
         };
         input.click();
       }} className="w-full px-2 py-1.5 text-[10px] bg-editor-bg text-editor-text rounded hover:bg-editor-hover transition-colors">
-        🔄 Replace Image
+        🔄 Replace Image (File)
       </button>
+      <button onClick={() => setShowUrlInput(!showUrlInput)}
+        className="w-full px-2 py-1.5 text-[10px] bg-editor-bg text-editor-text rounded hover:bg-editor-hover transition-colors mt-1">
+        🔗 Replace Image (URL)
+      </button>
+      {showUrlInput && (
+        <div className="mt-1 space-y-1">
+          <input
+            type="text"
+            value={imageUrl}
+            onChange={(e) => setImageUrl(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && loadFromUrl()}
+            placeholder="https://example.com/image.png"
+            className="w-full bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-1.5 py-1 focus:border-editor-accent outline-none"
+          />
+          <button onClick={loadFromUrl} disabled={urlLoading}
+            className="w-full px-2 py-1 text-[10px] bg-editor-accent text-white rounded hover:bg-purple-600 disabled:opacity-50">
+            {urlLoading ? 'Loading...' : 'Load Image'}
+          </button>
+        </div>
+      )}
     </>
   );
 }
@@ -279,9 +326,11 @@ function DrawingProperties({ el }: { el: any }) {
 }
 
 function TableProperties({ el, update }: { el: any; update: (u: any) => void }) {
+  const { activePage } = useDocumentStore();
   return (
     <>
       <SectionTitle>Table</SectionTitle>
+      <div className="text-[10px] text-gray-500 mb-2 italic">Double-click cells on canvas to edit inline</div>
       <PropRow label="Cols">{el.columns?.length || 0}</PropRow>
       <PropRow label="Rows">{el.rows?.length || 0}</PropRow>
       <PropRow label="Border">
@@ -307,6 +356,31 @@ function TableProperties({ el, update }: { el: any; update: (u: any) => void }) 
         }} className="flex-1 px-2 py-1 text-[10px] bg-editor-bg text-editor-text rounded hover:bg-editor-hover">
           + Col
         </button>
+      </div>
+
+      {/* Cell content editing grid */}
+      <SectionTitle>Cell Contents</SectionTitle>
+      <div className="space-y-1 max-h-64 overflow-y-auto">
+        {(el.rows || []).map((row: any, ri: number) => (
+          <div key={ri} className="space-y-0.5">
+            <div className="text-[8px] text-gray-500">Row {ri + 1}</div>
+            <div className="flex gap-0.5">
+              {(row.cells || []).map((cell: any, ci: number) => (
+                <textarea
+                  key={ci}
+                  value={cell.content || ''}
+                  onChange={(e) => {
+                    useDocumentStore.getState().pushHistory();
+                    useDocumentStore.getState().updateTableCell(activePage, el.id, ri, ci, e.target.value);
+                  }}
+                  placeholder={`R${ri + 1}C${ci + 1}`}
+                  rows={Math.max(1, Math.ceil((cell.content || '').length / 12))}
+                  className="flex-1 min-w-0 bg-editor-bg text-editor-text text-[9px] border border-editor-border rounded px-1 py-0.5 focus:border-editor-accent outline-none resize-none"
+                />
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </>
   );

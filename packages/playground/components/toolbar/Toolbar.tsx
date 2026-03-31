@@ -43,6 +43,12 @@ const shapeGroups: { label: string; shapes: { id: ShapeType; label: string; icon
       { id: 'heart', label: 'Heart', icon: '♥' },
       { id: 'cross', label: 'Cross', icon: '✚' },
       { id: 'callout', label: 'Callout', icon: '💬' },
+      { id: 'octagon', label: 'Octagon', icon: '⯃' },
+      { id: 'ring', label: 'Ring', icon: '◎' },
+      { id: 'cloud', label: 'Cloud', icon: '☁' },
+      { id: 'speechBubble', label: 'Speech Bubble', icon: '💭' },
+      { id: 'chevron', label: 'Chevron', icon: '❯' },
+      { id: 'banner', label: 'Banner', icon: '🏷' },
     ],
   },
   {
@@ -75,6 +81,7 @@ export function Toolbar() {
   } = useDocumentStore();
 
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showShapePalette, setShowShapePalette] = useState(false);
 
   // Insert text at next available position
   const insertText = useCallback(() => {
@@ -210,8 +217,11 @@ export function Toolbar() {
           <button
             key={tool.id}
             onClick={() => {
+              if (tool.id === 'image') {
+                handleInsertImage();
+                return;
+              }
               setActiveTool(tool.id);
-              if (tool.id === 'image') handleInsertImage();
             }}
             className={`w-8 h-8 flex items-center justify-center rounded text-sm transition-all ${
               activeTool === tool.id
@@ -225,29 +235,50 @@ export function Toolbar() {
         ))}
       </div>
 
-      {/* Shape picker */}
+      {/* Shape picker - visual grid palette */}
       {(activeTool === 'shape') && (
-        <div className="flex items-center gap-1 border-r border-editor-border pr-2 mr-1">
-          <select
-            value={activeShapeType}
-            onChange={(e) => setActiveShapeType(e.target.value as ShapeType)}
-            className="bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1"
+        <div className="relative border-r border-editor-border pr-2 mr-1">
+          <button
+            onClick={() => setShowShapePalette(!showShapePalette)}
+            className="flex items-center gap-1 px-2 py-1 text-xs bg-editor-bg border border-editor-border rounded hover:bg-editor-hover"
           >
-            {shapeGroups.map((group) => (
-              <optgroup key={group.label} label={group.label}>
-                {group.shapes.map((s) => (
-                  <option key={s.id} value={s.id}>{s.icon} {s.label}</option>
+            <span>{allShapes.find(s => s.id === activeShapeType)?.icon || '◻'}</span>
+            <span className="text-[10px]">{allShapes.find(s => s.id === activeShapeType)?.label || 'Shape'}</span>
+            <span className="text-[8px] text-gray-400">▾</span>
+          </button>
+          {showShapePalette && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowShapePalette(false)} />
+              <div className="absolute left-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 p-2 w-64">
+                {shapeGroups.map((group) => (
+                  <div key={group.label} className="mb-2">
+                    <div className="text-[9px] font-bold uppercase tracking-widest text-gray-500 mb-1">{group.label}</div>
+                    <div className="grid grid-cols-6 gap-0.5">
+                      {group.shapes.map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => { setActiveShapeType(s.id); setShowShapePalette(false); }}
+                          className={`w-9 h-9 flex items-center justify-center rounded text-sm transition-all ${
+                            activeShapeType === s.id
+                              ? 'bg-editor-accent text-white shadow-md'
+                              : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+                          }`}
+                          title={s.label}
+                        >
+                          {s.icon}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
-              </optgroup>
-            ))}
-          </select>
+              </div>
+            </>
+          )}
         </div>
       )}
 
-      {/* Quick insert buttons */}
+      {/* Quick insert */}
       <div className="flex gap-0.5 border-r border-editor-border pr-2 mr-1">
-        <button onClick={insertText} className="px-2 py-1 text-xs rounded hover:bg-editor-hover transition-colors" title="Insert text at next position">+ Text</button>
-        <button onClick={insertShape} className="px-2 py-1 text-xs rounded hover:bg-editor-hover transition-colors" title="Insert shape at next position">+ Shape</button>
         <button onClick={insertTable} className="px-2 py-1 text-xs rounded hover:bg-editor-hover transition-colors" title="Insert table at next position">+ Table</button>
       </div>
 

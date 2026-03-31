@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { calculateTableHeights } from './table-utils';
 
 // ============================================================================
 // Types
@@ -10,7 +11,8 @@ export type ShapeType =
   | 'rect' | 'roundedRect' | 'circle' | 'ellipse' | 'triangle'
   | 'star' | 'polygon' | 'arrow' | 'line' | 'path'
   | 'diamond' | 'pentagon' | 'hexagon' | 'parallelogram' | 'trapezoid'
-  | 'heart' | 'cross' | 'rightArrow' | 'doubleArrow' | 'callout';
+  | 'heart' | 'cross' | 'rightArrow' | 'doubleArrow' | 'callout'
+  | 'octagon' | 'ring' | 'cloud' | 'speechBubble' | 'chevron' | 'banner';
 export type EditorTool = 'select' | 'text' | 'image' | 'table' | 'shape' | 'pencil' | 'marker' | 'eraser' | 'hand' | 'zoom';
 
 export interface Fill {
@@ -221,9 +223,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const pages = [...s.pages];
     pages[pageIndex] = {
       ...pages[pageIndex],
-      elements: pages[pageIndex].elements.map((el) =>
-        el.id === elementId ? { ...el, ...updates } : el
-      ),
+      elements: pages[pageIndex].elements.map((el) => {
+        if (el.id === elementId) {
+          const updatedEl = { ...el, ...updates } as any;
+          const u = updates as any;
+          if (updatedEl.type === 'table' && (u.width !== undefined || u.rows !== undefined || u.columns !== undefined)) {
+            const { rows: updatedRows, totalHeight } = calculateTableHeights(updatedEl);
+            return { ...updatedEl, rows: updatedRows, height: Math.max(updatedEl.height || 0, totalHeight) };
+          }
+          return updatedEl;
+        }
+        return el;
+      }),
     };
     return { pages };
   }),
@@ -256,9 +267,17 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const pages = [...s.pages];
     pages[pageIndex] = {
       ...pages[pageIndex],
-      elements: pages[pageIndex].elements.map((el) =>
-        el.id === elementId ? { ...el, width: Math.max(10, width), height: Math.max(10, height) } : el
-      ),
+      elements: pages[pageIndex].elements.map((el) => {
+        if (el.id === elementId) {
+          const updatedEl = { ...el, width: Math.max(10, width), height: Math.max(10, height) } as any;
+          if (updatedEl.type === 'table') {
+            const { rows: updatedRows, totalHeight } = calculateTableHeights(updatedEl);
+            return { ...updatedEl, rows: updatedRows, height: Math.max(updatedEl.height, totalHeight) };
+          }
+          return updatedEl;
+        }
+        return el;
+      }),
     };
     return { pages };
   }),
@@ -280,12 +299,22 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const pages = [...s.pages];
     const el = pages[pageIndex].elements.find((e) => e.id === elementId) as any;
     if (!el || !el.rows?.[row]?.cells?.[col]) return s;
+
     const newRows = JSON.parse(JSON.stringify(el.rows));
     newRows[row].cells[col].content = content;
+
+    // Recalculate row heights accurately
+    const { rows: updatedRows, totalHeight } = calculateTableHeights({
+      ...el,
+      rows: newRows
+    });
+
+    const newHeight = Math.max(el.height, totalHeight);
+
     pages[pageIndex] = {
       ...pages[pageIndex],
       elements: pages[pageIndex].elements.map((e) =>
-        e.id === elementId ? { ...e, rows: newRows } : e
+        e.id === elementId ? { ...e, rows: updatedRows, height: newHeight } : e
       ),
     };
     return { pages };

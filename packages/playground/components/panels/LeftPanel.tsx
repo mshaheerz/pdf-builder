@@ -72,13 +72,15 @@ export function LeftPanel() {
             >
               <span className="text-[11px]">{typeIcon[el.type] || '❓'}</span>
               <span className="truncate flex-1 text-[11px]">{el.name || el.type}</span>
-              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className={`flex items-center gap-0.5 transition-opacity ${
+                !el.visible || el.locked ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
                     useDocumentStore.getState().updateElement(activePage, el.id, { visible: !el.visible });
                   }}
-                  className={`w-5 h-5 flex items-center justify-center rounded text-[10px] ${el.visible ? 'text-blue-400' : 'text-gray-600'}`}
+                  className={`w-5 h-5 flex items-center justify-center rounded text-[10px] ${!el.visible ? 'text-red-400' : 'text-blue-400'}`}
                   title={el.visible ? 'Hide' : 'Show'}
                 >
                   {el.visible ? '👁' : '🚫'}
