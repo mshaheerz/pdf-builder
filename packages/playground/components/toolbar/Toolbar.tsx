@@ -1,6 +1,6 @@
 'use client';
 
-import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextElement, type ShapeElement, type TableElement } from '@/store/document-store';
+import { useDocumentStore, generateId, type EditorTool, type ShapeType } from '@/store/document-store';
 import { useCallback, useState } from 'react';
 
 const tools: { id: EditorTool; icon: string; label: string }[] = [
@@ -82,55 +82,22 @@ export function Toolbar() {
 
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showShapePalette, setShowShapePalette] = useState(false);
+  const [showImageMenu, setShowImageMenu] = useState(false);
+  const [imageUrlValue, setImageUrlValue] = useState('');
+  const [showImageUrlInput, setShowImageUrlInput] = useState(false);
 
-  // Insert text at next available position
-  const insertText = useCallback(() => {
-    pushHistory();
-    const nextY = getNextYPosition(activePage);
-    const el: TextElement = {
-      id: generateId(), type: 'text',
-      x: 72, y: nextY, width: 400, height: 40,
-      rotation: 0, opacity: 1, locked: false, visible: true, name: 'Text',
-      content: 'Double click to edit this text',
-      font: currentFont, fontSize: currentFontSize,
-      fontWeight: 'normal', fontStyle: 'normal',
-      color: currentColor, align: 'left', lineHeight: 1.2, decoration: 'none',
-    };
-    addElement(activePage, el);
-    useDocumentStore.getState().setEditingTextId(el.id);
-    useDocumentStore.getState().setEditingCursorPos(el.content.length);
-  }, [activePage, currentFont, currentFontSize, currentColor]);
-
-  const insertShape = useCallback(() => {
-    pushHistory();
-    const nextY = getNextYPosition(activePage);
-    const el: ShapeElement = {
-      id: generateId(), type: 'shape',
-      x: 72, y: nextY, width: 120, height: 120,
-      rotation: 0, opacity: 1, locked: false, visible: true, name: activeShapeType,
-      shapeType: activeShapeType,
-      fill: { type: 'solid', color: currentFillColor },
-      stroke: { width: 2, color: currentColor, style: 'solid' },
-      borderRadius: activeShapeType === 'roundedRect' ? 12 : 0,
-    };
-    addElement(activePage, el);
-  }, [activePage, activeShapeType, currentFillColor, currentColor]);
-
-  const insertTable = useCallback(() => {
+  const insertImageFromUrl = useCallback((url: string) => {
+    if (!url.trim()) return;
     pushHistory();
     const nextY = getNextYPosition(activePage);
     addElement(activePage, {
-      id: generateId(), type: 'table',
-      x: 72, y: nextY, width: 450, height: 120,
-      rotation: 0, opacity: 1, locked: false, visible: true, name: 'Table',
-      columns: [{ width: 112 }, { width: 112 }, { width: 112 }, { width: 112 }],
-      rows: [
-        { height: 30, cells: [{ content: 'Header 1', background: '#E8E8FF' }, { content: 'Header 2', background: '#E8E8FF' }, { content: 'Header 3', background: '#E8E8FF' }, { content: 'Header 4', background: '#E8E8FF' }] },
-        { height: 30, cells: [{ content: '' }, { content: '' }, { content: '' }, { content: '' }] },
-        { height: 30, cells: [{ content: '' }, { content: '' }, { content: '' }, { content: '' }] },
-      ],
-      borderColor: '#C0C0C0',
+      id: generateId(), type: 'image',
+      x: 72, y: nextY, width: 300, height: 200,
+      rotation: 0, opacity: 1, locked: false, visible: true, name: 'Image (URL)',
+      src: url.trim(), fit: 'contain',
     } as any);
+    setShowImageUrlInput(false);
+    setImageUrlValue('');
   }, [activePage]);
 
   const handleInsertImage = useCallback(() => {
@@ -218,7 +185,7 @@ export function Toolbar() {
             key={tool.id}
             onClick={() => {
               if (tool.id === 'image') {
-                handleInsertImage();
+                setShowImageMenu(!showImageMenu);
                 return;
               }
               setActiveTool(tool.id);
@@ -277,10 +244,39 @@ export function Toolbar() {
         </div>
       )}
 
-      {/* Quick insert */}
-      <div className="flex gap-0.5 border-r border-editor-border pr-2 mr-1">
-        <button onClick={insertTable} className="px-2 py-1 text-xs rounded hover:bg-editor-hover transition-colors" title="Insert table at next position">+ Table</button>
-      </div>
+      {/* Image menu (upload file or URL) */}
+      {showImageMenu && (
+        <div className="relative">
+          <div className="fixed inset-0 z-40" onClick={() => { setShowImageMenu(false); setShowImageUrlInput(false); }} />
+          <div className="absolute left-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-52">
+            <button onClick={() => { handleInsertImage(); setShowImageMenu(false); }}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-editor-hover flex items-center gap-2">
+              📁 Upload from File
+            </button>
+            <button onClick={() => setShowImageUrlInput(!showImageUrlInput)}
+              className="w-full text-left px-3 py-1.5 text-xs hover:bg-editor-hover flex items-center gap-2">
+              🔗 Insert from URL
+            </button>
+            {showImageUrlInput && (
+              <div className="px-3 py-1.5 space-y-1 border-t border-editor-border mt-1">
+                <input
+                  type="text"
+                  value={imageUrlValue}
+                  onChange={(e) => setImageUrlValue(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { insertImageFromUrl(imageUrlValue); setShowImageMenu(false); } }}
+                  placeholder="https://..."
+                  className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1 focus:border-editor-accent outline-none"
+                  autoFocus
+                />
+                <button onClick={() => { insertImageFromUrl(imageUrlValue); setShowImageMenu(false); }}
+                  className="w-full px-2 py-1 text-xs bg-editor-accent text-white rounded hover:bg-purple-600">
+                  Insert
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Font */}
       <div className="flex items-center gap-1 border-r border-editor-border pr-2 mr-1">
