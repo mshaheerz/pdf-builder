@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
-import { useDocumentStore, generateId, type Element, type ShapeElement, type EditorMode } from '@/store/document-store';
+import { useDocumentStore, generateId, type Element, type ShapeElement, type EditorMode, type DocumentBodyElement } from '@/store/document-store';
 import { wrapText } from '@/store/table-utils';
 
 // ============================================================================
@@ -30,9 +30,11 @@ export function Canvas() {
     currentColor, currentFillColor, brushSize, activeShapeType,
     moveElement, resizeElement, addElement, updateElement, pushHistory,
     editingTextId, setEditingTextId, setEditingCursorPos, editingCursorPos,
+    editingSelectionStart, editingSelectionEnd, setEditingSelection,
     editingTableId, editingTableRow, editingTableCol, editingTableCursorPos,
     setEditingTable, setEditingTableCursorPos, updateTableCell,
-    editorMode,
+    editorMode, setEditorMode,
+    ensureDocumentBody,
   } = useDocumentStore();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -99,7 +101,7 @@ export function Canvas() {
   const hitTest = useCallback((px: number, py: number, elements: Element[]): Element | null => {
     for (let i = elements.length - 1; i >= 0; i--) {
       const el = elements[i];
-      if (!el.visible || el.locked) continue;
+      if (!el.visible || el.locked || el.type === 'documentBody') continue;
       if (hitTestElement(px, py, el)) return el;
     }
     return null;
@@ -175,6 +177,61 @@ export function Canvas() {
     return null;
   }, []);
 
+  // Helper: convert click coordinates to cursor position in document body
+  const clickToBodyCursorPos = useCallback((px: number, py: number, el: DocumentBodyElement): number => {
+    const canvas = canvasRef.current;
+    if (!canvas) return 0;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 0;
+
+    const content = el.content || '';
+    if (!content) return 0;
+
+    const weight = el.fontWeight === 'bold' ? 'bold' : '';
+    const style = el.fontStyle === 'italic' ? 'italic' : '';
+    ctx.font = `${style} ${weight} ${el.fontSize || 14}px ${el.font || 'sans-serif'}`.trim();
+    const lines = wrapText(ctx, content, el.width);
+    const lineHeight = (el.fontSize || 14) * (el.lineHeight || 1.2);
+
+    // Find which line from Y
+    const relY = py - el.y;
+    let lineIndex = Math.floor(relY / lineHeight);
+    lineIndex = Math.max(0, Math.min(lines.length - 1, lineIndex));
+
+    // Find character position on that line from X
+    const line = lines[lineIndex];
+    const lw = ctx.measureText(line).width;
+    let lineX = el.x;
+    if (el.align === 'center') lineX = el.x + (el.width - lw) / 2;
+    else if (el.align === 'right') lineX = el.x + el.width - lw;
+
+    const relX = px - lineX;
+    let charPos = 0;
+    for (let i = 0; i <= line.length; i++) {
+      const w = ctx.measureText(line.slice(0, i)).width;
+      if (w >= relX) {
+        // Check if closer to this char or previous
+        if (i > 0) {
+          const prevW = ctx.measureText(line.slice(0, i - 1)).width;
+          charPos = (relX - prevW < w - relX) ? i - 1 : i;
+        }
+        break;
+      }
+      charPos = i;
+    }
+
+    // Convert line index + charPos to absolute content position
+    let absPos = 0;
+    for (let i = 0; i < lineIndex; i++) {
+      absPos += lines[i].length;
+      // Account for whitespace/newline between lines
+      while (absPos < content.length && (content[absPos] === ' ' || content[absPos] === '\n')) {
+        absPos++;
+      }
+    }
+    return Math.min(absPos + charPos, content.length);
+  }, []);
+
   // ========================================================================
   // Mouse Handlers
   // ========================================================================
@@ -182,49 +239,47 @@ export function Canvas() {
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const { x, y } = canvasToPage(e.clientX, e.clientY);
 
-    // TEXT EDITOR MODE — click anywhere on page to type
+    // TEXT EDITOR MODE — click anywhere to place cursor in document body
     if (editorMode === 'textEditor') {
-      const hit = page ? hitTest(x, y, page.elements) : null;
+      const bodyId = ensureDocumentBody(activePage);
+      const currentPage = useDocumentStore.getState().pages[activePage];
+      const bodyEl = currentPage?.elements.find((el) => el.type === 'documentBody') as DocumentBodyElement | undefined;
 
-      // Click on existing text → enter editing
-      if (hit && hit.type === 'text') {
-        setEditingTextId(hit.id);
-        setEditingCursorPos((hit as any).content?.length ?? 0);
-        setSelectedIds([hit.id]);
-        setEditingTable(null);
-        return;
-      }
+      // Hit test non-body elements (images, shapes) for selection/dragging
+      const nonBodyElements = currentPage ? currentPage.elements.filter((el) => el.type !== 'documentBody') : [];
+      const hit = hitTest(x, y, nonBodyElements);
 
-      // Click on empty area inside page → create new text element and start editing
-      if (isInsidePage(x, y) && !hit) {
-        pushHistory();
-        const store = useDocumentStore.getState();
-        const newId = generateId();
-        addElement(activePage, {
-          id: newId, type: 'text',
-          x: Math.max(10, x), y: Math.max(10, y), width: page!.width - Math.max(10, x) - 20, height: 30,
-          rotation: 0, opacity: 1, locked: false, visible: true,
-          name: 'Text', content: '',
-          font: store.currentFont, fontSize: store.currentFontSize,
-          fontWeight: 'normal', fontStyle: 'normal',
-          color: store.currentColor, align: 'left', lineHeight: 1.2, decoration: 'none',
-        } as any);
-        setEditingTextId(newId);
-        setEditingCursorPos(0);
-        setSelectedIds([newId]);
-        return;
-      }
-
-      // Click on non-text element → select it
       if (hit) {
+        // Click on non-text element → select it for moving, but keep body editable
         setSelectedIds([hit.id]);
-        setEditingTextId(null);
         setIsDragging(true);
         setDragStart({ x, y });
         pushHistory();
-      } else {
+        // Don't clear editingTextId — keep body editing available
+        return;
+      }
+
+      // Any click (on page or outside) → ensure body editing stays active
+      if (bodyEl) {
+        setEditingTextId(bodyId);
+        setEditingTable(null);
         setSelectedIds([]);
-        setEditingTextId(null);
+        if (isInsidePage(x, y)) {
+          const cursorPos = clickToBodyCursorPos(x, y, bodyEl);
+          if (e.shiftKey) {
+            // Extend selection from current cursor to click position
+            const store = useDocumentStore.getState();
+            const anchor = store.editingSelectionStart !== null ? store.editingSelectionStart : store.editingCursorPos;
+            setEditingSelection(anchor, cursorPos);
+            setEditingCursorPos(cursorPos);
+          } else {
+            setEditingCursorPos(cursorPos);
+            setEditingSelection(null, null);
+            // Start potential drag selection
+            setDragStart({ x: cursorPos, y: 0 });
+            setIsDragging(true);
+          }
+        }
       }
       return;
     }
@@ -359,10 +414,24 @@ export function Canvas() {
       useDocumentStore.getState().setActiveTool('select');
       return;
     }
-  }, [activeTool, page, canvasToPage, hitTest, hitTestResizeHandle, pan, currentColor, currentFillColor, activeShapeType, activePage, zoom, selectedIds, editingTextId, isInsidePage, clampToPage, editorMode]);
+  }, [activeTool, page, canvasToPage, hitTest, hitTestResizeHandle, pan, currentColor, currentFillColor, activeShapeType, activePage, zoom, selectedIds, editingTextId, isInsidePage, clampToPage, editorMode, ensureDocumentBody, clickToBodyCursorPos]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const { x, y } = canvasToPage(e.clientX, e.clientY);
+
+    // Text editor drag-to-select
+    if (editorMode === 'textEditor' && isDragging && editingTextId) {
+      const store = useDocumentStore.getState();
+      const currentPage = store.pages[store.activePage];
+      const bodyEl = currentPage?.elements.find((el) => el.type === 'documentBody') as DocumentBodyElement | undefined;
+      if (bodyEl) {
+        const newPos = clickToBodyCursorPos(x, y, bodyEl);
+        const anchor = dragStart.x; // We stored anchor cursor pos in dragStart.x
+        store.setEditingSelection(anchor, newPos);
+        store.setEditingCursorPos(newPos);
+      }
+      return;
+    }
 
     // When not dragging, detect hover over resize handles for cursor
     if (!isDragging && !isResizing) {
@@ -530,13 +599,119 @@ export function Canvas() {
         e.preventDefault();
         const content = el.content || '';
         const pos = store.editingCursorPos;
+        const selStart = store.editingSelectionStart;
+        const selEnd = store.editingSelectionEnd;
+        const hasSelection = selStart !== null && selEnd !== null && selStart !== selEnd;
+        const selMin = hasSelection ? Math.min(selStart!, selEnd!) : pos;
+        const selMax = hasSelection ? Math.max(selStart!, selEnd!) : pos;
+
+        // Helper: delete selected text and return new content + cursor pos
+        const deleteSelection = (): { newContent: string; newPos: number } | null => {
+          if (!hasSelection) return null;
+          return { newContent: content.slice(0, selMin) + content.slice(selMax), newPos: selMin };
+        };
 
         if (e.key === 'Escape') {
-          store.setEditingTextId(null);
+          if (store.editorMode === 'textEditor') {
+            store.setEditorMode('design');
+          } else {
+            store.setEditingTextId(null);
+          }
+          store.setEditingSelection(null, null);
+          return;
+        }
+
+        // Ctrl+A select all
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+          store.setEditingSelection(0, content.length);
+          store.setEditingCursorPos(content.length);
+          return;
+        }
+
+        // Ctrl+C copy
+        if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+          if (hasSelection) {
+            navigator.clipboard.writeText(content.slice(selMin, selMax));
+          }
+          return;
+        }
+
+        // Ctrl+X cut
+        if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
+          if (hasSelection) {
+            navigator.clipboard.writeText(content.slice(selMin, selMax));
+            const d = deleteSelection()!;
+            store.updateElement(store.activePage, el.id, { content: d.newContent } as any);
+            store.setEditingCursorPos(d.newPos);
+          }
+          return;
+        }
+
+        // Ctrl+V paste
+        if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+          navigator.clipboard.readText().then((text) => {
+            const s = useDocumentStore.getState();
+            const curEl = s.pages[s.activePage]?.elements.find((el) => el.id === s.editingTextId) as any;
+            if (!curEl) return;
+            const curContent = curEl.content || '';
+            const curHasSel = s.editingSelectionStart !== null && s.editingSelectionEnd !== null && s.editingSelectionStart !== s.editingSelectionEnd;
+            const cMin = curHasSel ? Math.min(s.editingSelectionStart!, s.editingSelectionEnd!) : s.editingCursorPos;
+            const cMax = curHasSel ? Math.max(s.editingSelectionStart!, s.editingSelectionEnd!) : s.editingCursorPos;
+            const newContent = curContent.slice(0, cMin) + text + curContent.slice(cMax);
+            s.updateElement(s.activePage, curEl.id, { content: newContent } as any);
+            s.setEditingCursorPos(cMin + text.length);
+          });
+          return;
+        }
+
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const canvas = document.querySelector('canvas');
+          if (canvas) {
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              const weight = el.fontWeight === 'bold' ? 'bold' : '';
+              const style = el.fontStyle === 'italic' ? 'italic' : '';
+              ctx.font = `${style} ${weight} ${el.fontSize || 14}px ${el.font || 'sans-serif'}`.trim();
+              const lines = wrapText(ctx, content, el.width);
+              let charCount = 0;
+              let currentLine = 0;
+              let posInLine = 0;
+              for (let i = 0; i < lines.length; i++) {
+                if (pos <= charCount + lines[i].length) {
+                  currentLine = i;
+                  posInLine = pos - charCount;
+                  break;
+                }
+                charCount += lines[i].length;
+                while (charCount < content.length && (content[charCount] === ' ' || content[charCount] === '\n')) charCount++;
+              }
+              const targetLine = e.key === 'ArrowUp' ? currentLine - 1 : currentLine + 1;
+              if (targetLine >= 0 && targetLine < lines.length) {
+                const targetPosInLine = Math.min(posInLine, lines[targetLine].length);
+                let newAbsPos = 0;
+                for (let i = 0; i < targetLine; i++) {
+                  newAbsPos += lines[i].length;
+                  while (newAbsPos < content.length && (content[newAbsPos] === ' ' || content[newAbsPos] === '\n')) newAbsPos++;
+                }
+                const newPos = Math.min(newAbsPos + targetPosInLine, content.length);
+                if (e.shiftKey) {
+                  const anchor = selStart !== null ? selStart : pos;
+                  store.setEditingSelection(anchor, newPos);
+                  store.setEditingCursorPos(newPos);
+                } else {
+                  store.setEditingCursorPos(newPos);
+                }
+              }
+            }
+          }
           return;
         }
         if (e.key === 'Backspace') {
-          if (pos > 0) {
+          if (hasSelection) {
+            const d = deleteSelection()!;
+            store.updateElement(store.activePage, el.id, { content: d.newContent } as any);
+            store.setEditingCursorPos(d.newPos);
+          } else if (pos > 0) {
             const newContent = content.slice(0, pos - 1) + content.slice(pos);
             store.updateElement(store.activePage, el.id, { content: newContent } as any);
             store.setEditingCursorPos(pos - 1);
@@ -544,40 +719,90 @@ export function Canvas() {
           return;
         }
         if (e.key === 'Delete') {
-          if (pos < content.length) {
+          if (hasSelection) {
+            const d = deleteSelection()!;
+            store.updateElement(store.activePage, el.id, { content: d.newContent } as any);
+            store.setEditingCursorPos(d.newPos);
+          } else if (pos < content.length) {
             const newContent = content.slice(0, pos) + content.slice(pos + 1);
             store.updateElement(store.activePage, el.id, { content: newContent } as any);
           }
           return;
         }
         if (e.key === 'ArrowLeft') {
-          store.setEditingCursorPos(Math.max(0, pos - 1));
+          if (e.shiftKey) {
+            const anchor = selStart !== null ? selStart : pos;
+            const newPos = Math.max(0, pos - 1);
+            store.setEditingSelection(anchor, newPos);
+            store.setEditingCursorPos(newPos);
+          } else {
+            if (hasSelection) {
+              store.setEditingCursorPos(selMin);
+            } else {
+              store.setEditingCursorPos(Math.max(0, pos - 1));
+            }
+          }
           return;
         }
         if (e.key === 'ArrowRight') {
-          store.setEditingCursorPos(Math.min(content.length, pos + 1));
+          if (e.shiftKey) {
+            const anchor = selStart !== null ? selStart : pos;
+            const newPos = Math.min(content.length, pos + 1);
+            store.setEditingSelection(anchor, newPos);
+            store.setEditingCursorPos(newPos);
+          } else {
+            if (hasSelection) {
+              store.setEditingCursorPos(selMax);
+            } else {
+              store.setEditingCursorPos(Math.min(content.length, pos + 1));
+            }
+          }
           return;
         }
-        if (e.key === 'Home') { store.setEditingCursorPos(0); return; }
-        if (e.key === 'End') { store.setEditingCursorPos(content.length); return; }
+        if (e.key === 'Home') {
+          if (e.shiftKey) {
+            const anchor = selStart !== null ? selStart : pos;
+            store.setEditingSelection(anchor, 0);
+          }
+          store.setEditingCursorPos(0);
+          return;
+        }
+        if (e.key === 'End') {
+          if (e.shiftKey) {
+            const anchor = selStart !== null ? selStart : pos;
+            store.setEditingSelection(anchor, content.length);
+          }
+          store.setEditingCursorPos(content.length);
+          return;
+        }
         if (e.key === 'Enter') {
-          const newContent = content.slice(0, pos) + '\n' + content.slice(pos);
+          let newContent: string;
+          let newPos: number;
+          if (hasSelection) {
+            newContent = content.slice(0, selMin) + '\n' + content.slice(selMax);
+            newPos = selMin + 1;
+          } else {
+            newContent = content.slice(0, pos) + '\n' + content.slice(pos);
+            newPos = pos + 1;
+          }
           store.updateElement(store.activePage, el.id, { content: newContent } as any);
-          store.setEditingCursorPos(pos + 1);
+          store.setEditingCursorPos(newPos);
           return;
         }
 
         // Type character
         if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-          const newContent = content.slice(0, pos) + e.key + content.slice(pos);
+          let newContent: string;
+          let newPos: number;
+          if (hasSelection) {
+            newContent = content.slice(0, selMin) + e.key + content.slice(selMax);
+            newPos = selMin + 1;
+          } else {
+            newContent = content.slice(0, pos) + e.key + content.slice(pos);
+            newPos = pos + 1;
+          }
           store.updateElement(store.activePage, el.id, { content: newContent } as any);
-          store.setEditingCursorPos(pos + 1);
-          return;
-        }
-
-        // Ctrl+A select all
-        if (e.ctrlKey && e.key === 'a') {
-          store.setEditingCursorPos(content.length);
+          store.setEditingCursorPos(newPos);
           return;
         }
         return;
@@ -828,6 +1053,8 @@ export function Canvas() {
     // Selection UI (outside clip so handles are always visible)
     for (const el of page.elements) {
       if (!selectedIds.includes(el.id)) continue;
+      // Skip selection UI for documentBody elements in text editor mode
+      if (el.type === 'documentBody' && editorMode === 'textEditor') continue;
       ctx.save();
       ctx.strokeStyle = '#7c3aed';
       ctx.lineWidth = 1.5 / zoom;
@@ -971,6 +1198,7 @@ function renderElement(
 ) {
   switch (el.type) {
     case 'text': return renderText(ctx, el as any, editingTextId, cursorPos, blinkVisible);
+    case 'documentBody': return renderDocumentBody(ctx, el as any, editingTextId, cursorPos, blinkVisible);
     case 'shape': return renderShape(ctx, el as any);
     case 'image': return renderImage(ctx, el as any);
     case 'table': return renderTable(ctx, el as any, editingTableId ?? null, editingTableRow ?? -1, editingTableCol ?? -1, editingTableCursorPos ?? 0, blinkVisible);
@@ -1073,6 +1301,105 @@ function renderText(ctx: CanvasRenderingContext2D, el: any, editingTextId: strin
   if (isEditing && !content) {
     ctx.fillStyle = '#999';
     ctx.fillText('Type here...', el.x, el.y);
+  }
+}
+
+// ============================================================================
+// DOCUMENT BODY — full-page text like Word
+// ============================================================================
+function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyElement, editingTextId: string | null, cursorPos: number, blinkVisible: boolean) {
+  const isEditing = editingTextId === el.id;
+  const editorMode = useDocumentStore.getState().editorMode;
+
+  ctx.fillStyle = el.color || '#000';
+  const weight = el.fontWeight === 'bold' ? 'bold' : '';
+  const style = el.fontStyle === 'italic' ? 'italic' : '';
+  ctx.font = `${style} ${weight} ${el.fontSize || 14}px ${el.font || 'sans-serif'}`.trim();
+  ctx.textBaseline = 'top';
+
+  const content = el.content || '';
+  const lines = wrapText(ctx, content, el.width);
+  const lineHeight = (el.fontSize || 14) * (el.lineHeight || 1.2);
+
+  // In design mode, render as faint read-only text
+  if (editorMode !== 'textEditor') {
+    ctx.globalAlpha = 0.4;
+  }
+
+  // NO cream background or purple border — clean page look
+
+  // Render text lines
+  ctx.fillStyle = el.color || '#000';
+  for (let i = 0; i < lines.length; i++) {
+    let x = el.x;
+    const lw = ctx.measureText(lines[i]).width;
+    if (el.align === 'center') x = el.x + (el.width - lw) / 2;
+    else if (el.align === 'right') x = el.x + el.width - lw;
+    ctx.fillText(lines[i], x, el.y + i * lineHeight);
+
+    if (el.decoration === 'underline') {
+      ctx.strokeStyle = el.color || '#000';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, el.y + (i + 1) * lineHeight - 2);
+      ctx.lineTo(x + lw, el.y + (i + 1) * lineHeight - 2);
+      ctx.stroke();
+    }
+    if (el.decoration === 'strikethrough') {
+      ctx.strokeStyle = el.color || '#000';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      const midY = el.y + i * lineHeight + lineHeight * 0.4;
+      ctx.moveTo(x, midY);
+      ctx.lineTo(x + lw, midY);
+      ctx.stroke();
+    }
+  }
+
+  if (editorMode !== 'textEditor') {
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  // Blinking cursor
+  if (isEditing && blinkVisible) {
+    let charCount = 0;
+    let cursorX = el.x;
+    let cursorY = el.y;
+    let found = false;
+
+    for (let i = 0; i < lines.length && !found; i++) {
+      const lineLen = lines[i].length;
+      if (cursorPos <= charCount + lineLen || i === lines.length - 1) {
+        const localPos = Math.max(0, cursorPos - charCount);
+        const textBefore = lines[i].slice(0, Math.min(localPos, lineLen));
+        const beforeWidth = ctx.measureText(textBefore).width;
+        let lineX = el.x;
+        const lw = ctx.measureText(lines[i]).width;
+        if (el.align === 'center') lineX = el.x + (el.width - lw) / 2;
+        else if (el.align === 'right') lineX = el.x + el.width - lw;
+        cursorX = lineX + beforeWidth;
+        cursorY = el.y + i * lineHeight;
+        found = true;
+      }
+      charCount += lineLen;
+      while (charCount < content.length && charCount < cursorPos && (content[charCount] === ' ' || content[charCount] === '\n')) {
+        charCount++;
+      }
+    }
+
+    ctx.strokeStyle = '#7c3aed';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(cursorX, cursorY);
+    ctx.lineTo(cursorX, cursorY + lineHeight);
+    ctx.stroke();
+  }
+
+  // Placeholder
+  if (isEditing && !content) {
+    ctx.fillStyle = '#999';
+    ctx.fillText('Start typing...', el.x, el.y);
   }
 }
 

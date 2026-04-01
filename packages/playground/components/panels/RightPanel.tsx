@@ -4,9 +4,10 @@ import React from 'react';
 import { useDocumentStore, type Element } from '@/store/document-store';
 
 export function RightPanel() {
-  const { pages, activePage, selectedIds, updateElement } = useDocumentStore();
+  const { pages, activePage, selectedIds, updateElement, editorMode } = useDocumentStore();
   const page = pages[activePage];
-  const selectedEl = page?.elements.find((el) => selectedIds.includes(el.id));
+  const isTextEditorMode = editorMode === 'textEditor';
+  const selectedEl = isTextEditorMode ? null : page?.elements.find((el) => selectedIds.includes(el.id));
 
   const update = (updates: Partial<Element>) => {
     if (selectedEl) updateElement(activePage, selectedEl.id, updates);

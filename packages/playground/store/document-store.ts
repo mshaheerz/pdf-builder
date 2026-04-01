@@ -1,102 +1,19 @@
 import { create } from 'zustand';
 import { calculateTableHeights } from './table-utils';
+import { generateId } from '@pdf-builder/sdk';
+import type {
+  TextAlign, VerticalAlign, ShapeType, EditorTool, EditorMode,
+  Fill, BorderStyle, BaseElement, TextElement, ShapeElement,
+  ImageElement, TableElement, DrawingElement, DocumentBodyElement,
+  Element, Page,
+} from '@pdf-builder/sdk';
 
-// ============================================================================
-// Types
-// ============================================================================
-
-export type TextAlign = 'left' | 'center' | 'right' | 'justify';
-export type VerticalAlign = 'top' | 'middle' | 'bottom';
-export type ShapeType =
-  | 'rect' | 'roundedRect' | 'circle' | 'ellipse' | 'triangle'
-  | 'star' | 'polygon' | 'arrow' | 'line' | 'path'
-  | 'diamond' | 'pentagon' | 'hexagon' | 'parallelogram' | 'trapezoid'
-  | 'heart' | 'cross' | 'rightArrow' | 'doubleArrow' | 'callout'
-  | 'octagon' | 'ring' | 'cloud' | 'speechBubble' | 'chevron' | 'banner';
-export type EditorTool = 'select' | 'text' | 'image' | 'table' | 'shape' | 'pencil' | 'marker' | 'eraser' | 'hand' | 'zoom';
-export type EditorMode = 'design' | 'textEditor';
-
-export interface Fill {
-  type: 'none' | 'solid' | 'linearGradient' | 'radialGradient' | 'pattern';
-  color?: string;
-  angle?: number;
-  stops?: { offset: number; color: string }[];
-}
-
-export interface BorderStyle {
-  width: number;
-  color: string;
-  style: 'solid' | 'dashed' | 'dotted' | 'none';
-}
-
-export interface BaseElement {
-  id: string;
-  type: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rotation: number;
-  opacity: number;
-  locked: boolean;
-  visible: boolean;
-  name: string;
-}
-
-export interface TextElement extends BaseElement {
-  type: 'text';
-  content: string;
-  font: string;
-  fontSize: number;
-  fontWeight: 'normal' | 'bold';
-  fontStyle: 'normal' | 'italic';
-  color: string;
-  align: TextAlign;
-  lineHeight: number;
-  decoration: 'none' | 'underline' | 'strikethrough';
-}
-
-export interface ShapeElement extends BaseElement {
-  type: 'shape';
-  shapeType: ShapeType;
-  fill: Fill;
-  stroke: BorderStyle;
-  borderRadius: number;
-  polygonSides?: number;
-}
-
-export interface ImageElement extends BaseElement {
-  type: 'image';
-  src: string;
-  fit: 'contain' | 'cover' | 'fill';
-}
-
-export interface TableElement extends BaseElement {
-  type: 'table';
-  columns: { width: number }[];
-  rows: { height: number; cells: { content: string; background?: string }[] }[];
-  borderColor: string;
-}
-
-export interface DrawingElement extends BaseElement {
-  type: 'drawing';
-  paths: {
-    points: { x: number; y: number }[];
-    color: string;
-    width: number;
-    tool: 'pencil' | 'marker' | 'eraser';
-  }[];
-}
-
-export type Element = TextElement | ShapeElement | ImageElement | TableElement | DrawingElement | BaseElement;
-
-export interface Page {
-  id: string;
-  width: number;
-  height: number;
-  background: string;
-  elements: Element[];
-}
+export type {
+  TextAlign, VerticalAlign, ShapeType, EditorTool, EditorMode,
+  Fill, BorderStyle, BaseElement, TextElement, ShapeElement,
+  ImageElement, TableElement, DrawingElement, DocumentBodyElement,
+  Element, Page,
+};
 
 // ============================================================================
 // Store
@@ -122,6 +39,8 @@ interface DocumentState {
   // Inline text editing
   editingTextId: string | null;
   editingCursorPos: number;
+  editingSelectionStart: number | null;
+  editingSelectionEnd: number | null;
 
   // Inline table cell editing
   editingTableId: string | null;
@@ -154,6 +73,7 @@ interface DocumentState {
   setEditorMode: (mode: EditorMode) => void;
   setEditingTextId: (id: string | null) => void;
   setEditingCursorPos: (pos: number) => void;
+  setEditingSelection: (start: number | null, end: number | null) => void;
   setEditingTable: (id: string | null, row?: number, col?: number) => void;
   setEditingTableCursorPos: (pos: number) => void;
   updateTableCell: (pageIndex: number, elementId: string, row: number, col: number, content: string) => void;
@@ -163,10 +83,10 @@ interface DocumentState {
   exportToJson: () => string;
   loadFromJson: (json: string) => void;
   getNextYPosition: (pageIndex: number) => number;
+  ensureDocumentBody: (pageIndex: number) => string;
 }
 
-let idCounter = 0;
-export const generateId = () => `${Date.now()}_${++idCounter}`;
+export { generateId };
 
 const createDefaultPage = (): Page => ({
   id: generateId(),
@@ -194,6 +114,8 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   editorMode: 'design',
   editingTextId: null,
   editingCursorPos: 0,
+  editingSelectionStart: null,
+  editingSelectionEnd: null,
   editingTableId: null,
   editingTableRow: 0,
   editingTableCol: 0,
@@ -295,9 +217,18 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   setCurrentFont: (font) => set({ currentFont: font }),
   setCurrentFontSize: (size) => set({ currentFontSize: size }),
   setBrushSize: (size) => set({ brushSize: size }),
-  setEditorMode: (mode) => set({ editorMode: mode, activeTool: mode === 'textEditor' ? 'text' : 'select' }),
+  setEditorMode: (mode) => {
+    if (mode === 'textEditor') {
+      const state = get();
+      const bodyId = state.ensureDocumentBody(state.activePage);
+      set({ editorMode: mode, activeTool: 'text', editingTextId: bodyId, editingCursorPos: 0, selectedIds: [] });
+    } else {
+      set({ editorMode: mode, activeTool: 'select', editingTextId: null });
+    }
+  },
   setEditingTextId: (id) => set({ editingTextId: id, editingTableId: null }),
-  setEditingCursorPos: (pos) => set({ editingCursorPos: pos }),
+  setEditingCursorPos: (pos) => set({ editingCursorPos: pos, editingSelectionStart: null, editingSelectionEnd: null }),
+  setEditingSelection: (start, end) => set({ editingSelectionStart: start, editingSelectionEnd: end }),
   setEditingTable: (id, row = 0, col = 0) => set({ editingTableId: id, editingTableRow: row, editingTableCol: col, editingTableCursorPos: 0, editingTextId: null }),
   setEditingTableCursorPos: (pos) => set({ editingTableCursorPos: pos }),
   updateTableCell: (pageIndex, elementId, row, col, content) => set((s) => {
@@ -358,6 +289,29 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     } catch (e) {
       console.error('Failed to load document:', e);
     }
+  },
+
+  ensureDocumentBody: (pageIndex: number) => {
+    const state = get();
+    const page = state.pages[pageIndex];
+    if (!page) return '';
+    const existing = page.elements.find((el) => el.type === 'documentBody') as DocumentBodyElement | undefined;
+    if (existing) return existing.id;
+    const margin = 72;
+    const newId = generateId();
+    const body: DocumentBodyElement = {
+      id: newId, type: 'documentBody',
+      x: margin, y: margin, width: page.width - margin * 2, height: page.height - margin,
+      rotation: 0, opacity: 1, locked: true, visible: true, name: 'Document Body',
+      content: '', font: state.currentFont, fontSize: state.currentFontSize,
+      fontWeight: 'normal', fontStyle: 'normal',
+      color: state.currentColor, align: 'left', lineHeight: 1.2, decoration: 'none',
+      marginLeft: margin, marginRight: margin, marginTop: margin,
+    };
+    const pages = [...state.pages];
+    pages[pageIndex] = { ...pages[pageIndex], elements: [body, ...pages[pageIndex].elements] };
+    set({ pages });
+    return newId;
   },
 
   // Find the next available Y position (below all existing elements)

@@ -23,8 +23,9 @@ export const pageSizes = {
 };
 
 /** Generate a unique ID */
+let idCounter = 0;
 export function generateId(): string {
-  return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  return `${Date.now()}_${++idCounter}`;
 }
 
 /** Clamp a value between min and max */

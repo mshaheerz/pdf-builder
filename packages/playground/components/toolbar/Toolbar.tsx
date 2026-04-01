@@ -2,6 +2,7 @@
 
 import { useDocumentStore, generateId, type EditorTool, type ShapeType } from '@/store/document-store';
 import { useCallback, useState } from 'react';
+import { exportPdfWasm } from '@/lib/pdf-export';
 
 const tools: { id: EditorTool; icon: string; label: string }[] = [
   { id: 'select', icon: '↖', label: 'Select (V)' },
@@ -93,7 +94,8 @@ export function Toolbar() {
   // Get selected text element for text editor mode formatting
   const page = pages[activePage];
   const selectedEl = page?.elements.find((el) => selectedIds.includes(el.id));
-  const selectedTextEl = selectedEl?.type === 'text' ? selectedEl as any : null;
+  const bodyEl = isTextEditorMode ? page?.elements.find((el) => el.type === 'documentBody') : null;
+  const selectedTextEl = isTextEditorMode ? (bodyEl as any) : (selectedEl?.type === 'text' ? selectedEl as any : null);
 
   const insertImageFromUrl = useCallback((url: string) => {
     if (!url.trim()) return;
@@ -139,8 +141,27 @@ export function Toolbar() {
     setShowExportMenu(false);
   }, [exportToJson]);
 
-  // EXPORT: PDF (client-side)
-  const handleExportPdfClient = useCallback(async () => {
+  // EXPORT: PDF (WASM — Rust engine)
+  const handleExportPdfWasm = useCallback(async () => {
+    setShowExportMenu(false);
+    const json = exportToJson();
+    try {
+      const pdfBytes = await exportPdfWasm(json);
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'document.pdf';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('PDF export failed. Check console for details.');
+      console.error(err);
+    }
+  }, [exportToJson]);
+
+  // EXPORT: PDF (server-side fallback via API route)
+  const handleExportPdfServer = useCallback(async () => {
     setShowExportMenu(false);
     const json = exportToJson();
     try {
@@ -162,9 +183,6 @@ export function Toolbar() {
       console.error(err);
     }
   }, [exportToJson]);
-
-  // EXPORT: PDF (server-side)
-  const handleExportPdfServer = handleExportPdfClient;
 
   // LOAD JSON
   const handleLoadJson = useCallback(() => {
@@ -333,8 +351,8 @@ export function Toolbar() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
                 <div className="absolute right-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-56">
-                  <button onClick={handleExportPdfClient} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
-                    <span className="text-red-400">📄</span> Export as PDF (Client)
+                  <button onClick={handleExportPdfWasm} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
+                    <span className="text-red-400">📄</span> Export as PDF (WASM)
                   </button>
                   <button onClick={handleExportPdfServer} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
                     <span className="text-blue-400">📄</span> Export as PDF (Server)
@@ -544,8 +562,8 @@ export function Toolbar() {
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
             <div className="absolute right-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-56">
-              <button onClick={handleExportPdfClient} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
-                <span className="text-red-400">📄</span> Export as PDF (Client)
+              <button onClick={handleExportPdfWasm} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
+                <span className="text-red-400">📄</span> Export as PDF (WASM)
               </button>
               <button onClick={handleExportPdfServer} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
                 <span className="text-blue-400">📄</span> Export as PDF (Server)

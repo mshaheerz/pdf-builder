@@ -32,16 +32,7 @@ export interface FontRegistration {
   weight: 'normal' | 'bold';
   style: 'normal' | 'italic';
   source: 'builtin' | 'custom';
-  data?: ArrayBuffer; // for custom fonts
-}
-
-export interface Page {
-  id: string;
-  size: { width: number; height: number };
-  orientation: 'portrait' | 'landscape';
-  margins: Margins;
-  background: Fill;
-  elements: Element[];
+  data?: ArrayBuffer;
 }
 
 export interface Margins {
@@ -52,18 +43,55 @@ export interface Margins {
 }
 
 // ============================================================================
-// Elements
+// Page - flat structure matching playground
 // ============================================================================
 
-export type Element =
-  | TextElement
-  | RichTextElement
-  | ImageElement
-  | TableElement
-  | ShapeElement
-  | DrawingElement
-  | GroupElement
-  | PageBreakElement;
+export interface Page {
+  id: string;
+  width: number;
+  height: number;
+  background: string;
+  elements: Element[];
+}
+
+// ============================================================================
+// Styling
+// ============================================================================
+
+export type TextAlign = 'left' | 'center' | 'right' | 'justify';
+export type VerticalAlign = 'top' | 'middle' | 'bottom';
+
+export type ShapeType =
+  | 'rect' | 'roundedRect' | 'circle' | 'ellipse' | 'triangle'
+  | 'star' | 'polygon' | 'arrow' | 'line' | 'path'
+  | 'diamond' | 'pentagon' | 'hexagon' | 'parallelogram' | 'trapezoid'
+  | 'heart' | 'cross' | 'rightArrow' | 'doubleArrow' | 'callout'
+  | 'octagon' | 'ring' | 'cloud' | 'speechBubble' | 'chevron' | 'banner';
+
+export type EditorTool = 'select' | 'text' | 'image' | 'table' | 'shape' | 'pencil' | 'marker' | 'eraser' | 'hand' | 'zoom';
+export type EditorMode = 'design' | 'textEditor';
+
+export interface Fill {
+  type: 'none' | 'solid' | 'linearGradient' | 'radialGradient' | 'pattern';
+  color?: string;
+  angle?: number;
+  stops?: { offset: number; color: string }[];
+}
+
+export interface BorderStyle {
+  width: number;
+  color: string;
+  style: 'solid' | 'dashed' | 'dotted' | 'none';
+}
+
+export interface Point {
+  x: number;
+  y: number;
+}
+
+// ============================================================================
+// Elements
+// ============================================================================
 
 export interface BaseElement {
   id: string;
@@ -88,166 +116,67 @@ export interface TextElement extends BaseElement {
   fontStyle: 'normal' | 'italic';
   color: string;
   align: TextAlign;
-  verticalAlign: VerticalAlign;
   lineHeight: number;
-  letterSpacing: number;
-  decoration: TextDecoration;
-}
-
-export interface RichTextElement extends BaseElement {
-  type: 'richtext';
-  spans: TextSpan[];
-  align: TextAlign;
-  verticalAlign: VerticalAlign;
-  lineHeight: number;
-}
-
-export interface TextSpan {
-  text: string;
-  font?: string;
-  fontSize?: number;
-  fontWeight?: 'normal' | 'bold';
-  fontStyle?: 'normal' | 'italic';
-  color?: string;
-  decoration?: TextDecoration;
-  backgroundColor?: string;
-}
-
-export interface ImageElement extends BaseElement {
-  type: 'image';
-  src: string;
-  originalWidth: number;
-  originalHeight: number;
-  fit: 'contain' | 'cover' | 'fill' | 'none';
-  borderRadius: number;
-  border: BorderStyle;
-}
-
-export interface TableElement extends BaseElement {
-  type: 'table';
-  columns: TableColumn[];
-  rows: TableRow[];
-  defaultBorder: BorderStyle;
-  cellPadding: number;
-  headerRows: number;
-}
-
-export interface TableColumn {
-  width: number;
-}
-
-export interface TableRow {
-  height: number | 'auto';
-  cells: TableCell[];
-}
-
-export interface TableCell {
-  content: TextSpan[];
-  colspan: number;
-  rowspan: number;
-  padding: Margins;
-  background: Fill;
-  border: {
-    top: BorderStyle;
-    right: BorderStyle;
-    bottom: BorderStyle;
-    left: BorderStyle;
-  };
-  align: TextAlign;
-  verticalAlign: VerticalAlign;
+  decoration: 'none' | 'underline' | 'strikethrough';
+  verticalAlign?: VerticalAlign;
+  letterSpacing?: number;
 }
 
 export interface ShapeElement extends BaseElement {
   type: 'shape';
   shapeType: ShapeType;
   fill: Fill;
-  stroke: StrokeStyle;
+  stroke: BorderStyle;
   borderRadius: number;
-  points?: Point[];
-  starPoints?: number;
+  polygonSides?: number;
+}
+
+export interface ImageElement extends BaseElement {
+  type: 'image';
+  src: string;
+  fit: 'contain' | 'cover' | 'fill';
+  originalWidth?: number;
+  originalHeight?: number;
+}
+
+export interface TableElement extends BaseElement {
+  type: 'table';
+  columns: { width: number }[];
+  rows: { height: number; cells: { content: string; background?: string }[] }[];
+  borderColor: string;
 }
 
 export interface DrawingElement extends BaseElement {
   type: 'drawing';
-  paths: DrawingPath[];
+  paths: {
+    points: { x: number; y: number }[];
+    color: string;
+    width: number;
+    tool: 'pencil' | 'marker' | 'eraser';
+  }[];
 }
 
-export interface DrawingPath {
-  points: DrawingPoint[];
-  strokeColor: string;
-  strokeWidth: number;
-  opacity: number;
-  tool: 'pencil' | 'marker' | 'eraser';
-}
-
-export interface DrawingPoint {
-  x: number;
-  y: number;
-  pressure?: number;
-}
-
-export interface GroupElement extends BaseElement {
-  type: 'group';
-  children: Element[];
-}
-
-export interface PageBreakElement extends BaseElement {
-  type: 'pagebreak';
-}
-
-// ============================================================================
-// Styling
-// ============================================================================
-
-export type TextAlign = 'left' | 'center' | 'right' | 'justify';
-export type VerticalAlign = 'top' | 'middle' | 'bottom';
-export type TextDecoration = 'none' | 'underline' | 'strikethrough';
-export type ShapeType = 'rect' | 'roundedRect' | 'circle' | 'ellipse' | 'triangle' | 'star' | 'polygon' | 'arrow' | 'line' | 'path';
-
-export interface Point {
-  x: number;
-  y: number;
-}
-
-export type Fill =
-  | { type: 'none' }
-  | { type: 'solid'; color: string }
-  | { type: 'linearGradient'; angle: number; stops: GradientStop[] }
-  | { type: 'radialGradient'; cx: number; cy: number; r: number; stops: GradientStop[] }
-  | { type: 'pattern'; patternType: string; color: string; backgroundColor: string; scale: number };
-
-export interface GradientStop {
-  offset: number;
+export interface DocumentBodyElement extends BaseElement {
+  type: 'documentBody';
+  content: string;
+  font: string;
+  fontSize: number;
+  fontWeight: 'normal' | 'bold';
+  fontStyle: 'normal' | 'italic';
   color: string;
+  align: TextAlign;
+  lineHeight: number;
+  decoration: 'none' | 'underline' | 'strikethrough';
+  marginLeft: number;
+  marginRight: number;
+  marginTop: number;
 }
 
-export interface BorderStyle {
-  width: number;
-  color: string;
-  style: 'solid' | 'dashed' | 'dotted' | 'none';
-}
-
-export interface StrokeStyle extends BorderStyle {
-  dashArray?: number[];
-  lineCap?: 'butt' | 'round' | 'square';
-  lineJoin?: 'miter' | 'round' | 'bevel';
-}
+export type Element = TextElement | ShapeElement | ImageElement | TableElement | DrawingElement | DocumentBodyElement | BaseElement;
 
 // ============================================================================
 // Editor State
 // ============================================================================
-
-export type EditorTool =
-  | 'select'
-  | 'text'
-  | 'image'
-  | 'table'
-  | 'shape'
-  | 'pencil'
-  | 'marker'
-  | 'eraser'
-  | 'hand'
-  | 'zoom';
 
 export interface EditorState {
   activeTool: EditorTool;
@@ -272,7 +201,7 @@ export interface EditorState {
 export interface ExportOptions {
   mode: 'client' | 'server';
   compression: boolean;
-  imageQuality: number; // 0-100
+  imageQuality: number;
   embedFonts: boolean;
   pageRange?: { start: number; end: number };
 }
