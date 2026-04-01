@@ -14,6 +14,7 @@ export type ShapeType =
   | 'heart' | 'cross' | 'rightArrow' | 'doubleArrow' | 'callout'
   | 'octagon' | 'ring' | 'cloud' | 'speechBubble' | 'chevron' | 'banner';
 export type EditorTool = 'select' | 'text' | 'image' | 'table' | 'shape' | 'pencil' | 'marker' | 'eraser' | 'hand' | 'zoom';
+export type EditorMode = 'design' | 'textEditor';
 
 export interface Fill {
   type: 'none' | 'solid' | 'linearGradient' | 'radialGradient' | 'pattern';
@@ -116,6 +117,7 @@ interface DocumentState {
   brushOpacity: number;
   showGrid: boolean;
   snapToGrid: boolean;
+  editorMode: EditorMode;
 
   // Inline text editing
   editingTextId: string | null;
@@ -149,6 +151,7 @@ interface DocumentState {
   setCurrentFont: (font: string) => void;
   setCurrentFontSize: (size: number) => void;
   setBrushSize: (size: number) => void;
+  setEditorMode: (mode: EditorMode) => void;
   setEditingTextId: (id: string | null) => void;
   setEditingCursorPos: (pos: number) => void;
   setEditingTable: (id: string | null, row?: number, col?: number) => void;
@@ -188,6 +191,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   brushOpacity: 1,
   showGrid: false,
   snapToGrid: false,
+  editorMode: 'design',
   editingTextId: null,
   editingCursorPos: 0,
   editingTableId: null,
@@ -291,6 +295,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   setCurrentFont: (font) => set({ currentFont: font }),
   setCurrentFontSize: (size) => set({ currentFontSize: size }),
   setBrushSize: (size) => set({ brushSize: size }),
+  setEditorMode: (mode) => set({ editorMode: mode, activeTool: mode === 'textEditor' ? 'text' : 'select' }),
   setEditingTextId: (id) => set({ editingTextId: id, editingTableId: null }),
   setEditingCursorPos: (pos) => set({ editingCursorPos: pos }),
   setEditingTable: (id, row = 0, col = 0) => set({ editingTableId: id, editingTableRow: row, editingTableCol: col, editingTableCursorPos: 0, editingTextId: null }),

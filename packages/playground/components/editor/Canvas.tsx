@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
-import { useDocumentStore, generateId, type Element, type ShapeElement } from '@/store/document-store';
+import { useDocumentStore, generateId, type Element, type ShapeElement, type EditorMode } from '@/store/document-store';
 import { wrapText } from '@/store/table-utils';
 
 // ============================================================================
@@ -32,6 +32,7 @@ export function Canvas() {
     editingTextId, setEditingTextId, setEditingCursorPos, editingCursorPos,
     editingTableId, editingTableRow, editingTableCol, editingTableCursorPos,
     setEditingTable, setEditingTableCursorPos, updateTableCell,
+    editorMode,
   } = useDocumentStore();
 
   const [isDragging, setIsDragging] = useState(false);
@@ -139,6 +140,7 @@ export function Canvas() {
       };
       return map[hoveredHandle] || 'default';
     }
+    if (editorMode === 'textEditor') return 'text';
     switch (activeTool) {
       case 'select': return 'default';
       case 'text': return 'text';
@@ -150,7 +152,7 @@ export function Canvas() {
       case 'zoom': return 'zoom-in';
       default: return 'default';
     }
-  }, [activeTool, isDragging, isResizing, resizeHandle, hoveredHandle]);
+  }, [activeTool, isDragging, isResizing, resizeHandle, hoveredHandle, editorMode]);
 
   // Helper: which table cell is at (px, py)?
   const hitTestTableCell = useCallback((px: number, py: number, el: any): { row: number; col: number } | null => {
@@ -179,6 +181,53 @@ export function Canvas() {
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const { x, y } = canvasToPage(e.clientX, e.clientY);
+
+    // TEXT EDITOR MODE — click anywhere on page to type
+    if (editorMode === 'textEditor') {
+      const hit = page ? hitTest(x, y, page.elements) : null;
+
+      // Click on existing text → enter editing
+      if (hit && hit.type === 'text') {
+        setEditingTextId(hit.id);
+        setEditingCursorPos((hit as any).content?.length ?? 0);
+        setSelectedIds([hit.id]);
+        setEditingTable(null);
+        return;
+      }
+
+      // Click on empty area inside page → create new text element and start editing
+      if (isInsidePage(x, y) && !hit) {
+        pushHistory();
+        const store = useDocumentStore.getState();
+        const newId = generateId();
+        addElement(activePage, {
+          id: newId, type: 'text',
+          x: Math.max(10, x), y: Math.max(10, y), width: page!.width - Math.max(10, x) - 20, height: 30,
+          rotation: 0, opacity: 1, locked: false, visible: true,
+          name: 'Text', content: '',
+          font: store.currentFont, fontSize: store.currentFontSize,
+          fontWeight: 'normal', fontStyle: 'normal',
+          color: store.currentColor, align: 'left', lineHeight: 1.2, decoration: 'none',
+        } as any);
+        setEditingTextId(newId);
+        setEditingCursorPos(0);
+        setSelectedIds([newId]);
+        return;
+      }
+
+      // Click on non-text element → select it
+      if (hit) {
+        setSelectedIds([hit.id]);
+        setEditingTextId(null);
+        setIsDragging(true);
+        setDragStart({ x, y });
+        pushHistory();
+      } else {
+        setSelectedIds([]);
+        setEditingTextId(null);
+      }
+      return;
+    }
 
     // HAND tool
     if (activeTool === 'hand') {
@@ -213,8 +262,8 @@ export function Canvas() {
 
       const hit = page ? hitTest(x, y, page.elements) : null;
       if (hit) {
-        // Double-click on text → enter editing mode
-        if (hit.type === 'text' && e.detail === 2) {
+        // Single-click on text → enter editing mode directly
+        if (hit.type === 'text') {
           setEditingTextId(hit.id);
           setEditingCursorPos((hit as any).content?.length ?? 0);
           setSelectedIds([hit.id]);
@@ -310,7 +359,7 @@ export function Canvas() {
       useDocumentStore.getState().setActiveTool('select');
       return;
     }
-  }, [activeTool, page, canvasToPage, hitTest, hitTestResizeHandle, pan, currentColor, currentFillColor, activeShapeType, activePage, zoom, selectedIds, editingTextId, isInsidePage, clampToPage]);
+  }, [activeTool, page, canvasToPage, hitTest, hitTestResizeHandle, pan, currentColor, currentFillColor, activeShapeType, activePage, zoom, selectedIds, editingTextId, isInsidePage, clampToPage, editorMode]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     const { x, y } = canvasToPage(e.clientX, e.clientY);
@@ -812,7 +861,7 @@ export function Canvas() {
     ctx.font = '10px sans-serif';
     ctx.fillText(`${page.width} × ${page.height} pt  |  ${Math.round(zoom * 100)}%  |  ${page.elements.length} elements`, 10, h - 10);
 
-  }, [page, zoom, selectedIds, pan, isDragging, isResizing, drawingPoints, activeTool, currentColor, currentFillColor, brushSize, editingTextId, editingCursorPos, blinkVisible, shapeDrawing, activeShapeType, editingTableId, editingTableRow, editingTableCol, editingTableCursorPos]);
+  }, [page, zoom, selectedIds, pan, isDragging, isResizing, drawingPoints, activeTool, currentColor, currentFillColor, brushSize, editingTextId, editingCursorPos, blinkVisible, shapeDrawing, activeShapeType, editingTableId, editingTableRow, editingTableCol, editingTableCursorPos, editorMode]);
 
   // Handle window resize
   useEffect(() => {

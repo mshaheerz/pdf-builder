@@ -78,6 +78,8 @@ export function Toolbar() {
     brushSize, setBrushSize, zoom, setZoom,
     activePage, addElement, addPage, pages,
     undo, redo, pushHistory, exportToJson, getNextYPosition,
+    editorMode, setEditorMode,
+    selectedIds, updateElement,
   } = useDocumentStore();
 
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -85,6 +87,13 @@ export function Toolbar() {
   const [showImageMenu, setShowImageMenu] = useState(false);
   const [imageUrlValue, setImageUrlValue] = useState('');
   const [showImageUrlInput, setShowImageUrlInput] = useState(false);
+
+  const isTextEditorMode = editorMode === 'textEditor';
+
+  // Get selected text element for text editor mode formatting
+  const page = pages[activePage];
+  const selectedEl = page?.elements.find((el) => selectedIds.includes(el.id));
+  const selectedTextEl = selectedEl?.type === 'text' ? selectedEl as any : null;
 
   const insertImageFromUrl = useCallback((url: string) => {
     if (!url.trim()) return;
@@ -134,7 +143,6 @@ export function Toolbar() {
   const handleExportPdfClient = useCallback(async () => {
     setShowExportMenu(false);
     const json = exportToJson();
-    // Use the server API route to generate PDF
     try {
       const res = await fetch('/api/export-pdf', {
         method: 'POST',
@@ -156,7 +164,7 @@ export function Toolbar() {
   }, [exportToJson]);
 
   // EXPORT: PDF (server-side)
-  const handleExportPdfServer = handleExportPdfClient; // same endpoint, different label
+  const handleExportPdfServer = handleExportPdfClient;
 
   // LOAD JSON
   const handleLoadJson = useCallback(() => {
@@ -176,8 +184,190 @@ export function Toolbar() {
     setShowExportMenu(false);
   }, []);
 
+  const updateSelectedText = (updates: any) => {
+    if (selectedTextEl) {
+      updateElement(activePage, selectedTextEl.id, updates);
+    }
+  };
+
+  // ---- TEXT EDITOR MODE TOOLBAR ----
+  if (isTextEditorMode) {
+    return (
+      <div className="bg-editor-surface border-b border-editor-border flex flex-col flex-shrink-0">
+        {/* Top row: mode toggle + font + export */}
+        <div className="flex items-center gap-1 px-2 py-1.5 flex-wrap">
+          {/* Mode toggle */}
+          <button
+            onClick={() => setEditorMode('design')}
+            className="px-3 py-1.5 text-xs bg-editor-bg text-editor-text rounded-md hover:bg-editor-hover transition-all border border-editor-border mr-1"
+            title="Switch to Design mode"
+          >
+            Design Mode
+          </button>
+          <div className="w-px h-6 bg-editor-border mx-1" />
+
+          {/* Font */}
+          <select value={selectedTextEl?.font || currentFont} onChange={(e) => {
+            setCurrentFont(e.target.value);
+            updateSelectedText({ font: e.target.value });
+          }}
+            className="bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1 py-1 w-32"
+            style={{ fontFamily: selectedTextEl?.font || currentFont }}>
+            {fonts.map((f) => (
+              <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
+            ))}
+          </select>
+
+          {/* Font size */}
+          <select value={selectedTextEl?.fontSize || currentFontSize} onChange={(e) => {
+            const size = Number(e.target.value);
+            setCurrentFontSize(size);
+            updateSelectedText({ fontSize: size });
+          }}
+            className="bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1 py-1 w-14">
+            {fontSizes.map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+
+          <div className="w-px h-6 bg-editor-border mx-1" />
+
+          {/* Bold / Italic / Underline / Strikethrough */}
+          <button onClick={() => {
+            const v = selectedTextEl?.fontWeight === 'bold' ? 'normal' : 'bold';
+            updateSelectedText({ fontWeight: v });
+          }}
+            className={`w-7 h-7 flex items-center justify-center rounded text-xs font-bold transition-colors ${
+              selectedTextEl?.fontWeight === 'bold' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+            }`} title="Bold">B</button>
+
+          <button onClick={() => {
+            const v = selectedTextEl?.fontStyle === 'italic' ? 'normal' : 'italic';
+            updateSelectedText({ fontStyle: v });
+          }}
+            className={`w-7 h-7 flex items-center justify-center rounded text-xs italic transition-colors ${
+              selectedTextEl?.fontStyle === 'italic' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+            }`} title="Italic">I</button>
+
+          <button onClick={() => {
+            const v = selectedTextEl?.decoration === 'underline' ? 'none' : 'underline';
+            updateSelectedText({ decoration: v });
+          }}
+            className={`w-7 h-7 flex items-center justify-center rounded text-xs underline transition-colors ${
+              selectedTextEl?.decoration === 'underline' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+            }`} title="Underline">U</button>
+
+          <button onClick={() => {
+            const v = selectedTextEl?.decoration === 'strikethrough' ? 'none' : 'strikethrough';
+            updateSelectedText({ decoration: v });
+          }}
+            className={`w-7 h-7 flex items-center justify-center rounded text-xs line-through transition-colors ${
+              selectedTextEl?.decoration === 'strikethrough' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+            }`} title="Strikethrough">S</button>
+
+          <div className="w-px h-6 bg-editor-border mx-1" />
+
+          {/* Alignment */}
+          {(['left', 'center', 'right', 'justify'] as const).map((align) => (
+            <button key={align} onClick={() => updateSelectedText({ align })}
+              className={`w-7 h-7 flex items-center justify-center rounded text-[10px] transition-colors ${
+                selectedTextEl?.align === align ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+              }`} title={align.charAt(0).toUpperCase() + align.slice(1)}>
+              {align === 'left' ? '☰' : align === 'center' ? '☰' : align === 'right' ? '☰' : '☰'}
+            </button>
+          ))}
+
+          <div className="w-px h-6 bg-editor-border mx-1" />
+
+          {/* Text color */}
+          <div className="flex items-center gap-0.5">
+            <span className="text-[10px] text-gray-400">Color</span>
+            <input type="color" value={selectedTextEl?.color || currentColor} onChange={(e) => {
+              setCurrentColor(e.target.value);
+              updateSelectedText({ color: e.target.value });
+            }}
+              className="w-6 h-6 rounded cursor-pointer border border-editor-border" />
+          </div>
+
+          {/* Line Height */}
+          <div className="flex items-center gap-0.5">
+            <span className="text-[10px] text-gray-400">LH</span>
+            <select value={selectedTextEl?.lineHeight || 1.2} onChange={(e) => updateSelectedText({ lineHeight: parseFloat(e.target.value) })}
+              className="bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-1 py-0.5 w-12">
+              {[1, 1.15, 1.2, 1.5, 1.75, 2, 2.5, 3].map((v) => (
+                <option key={v} value={v}>{v}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="w-px h-6 bg-editor-border mx-1" />
+
+          {/* Undo/Redo */}
+          <button onClick={undo} className="px-2 py-1 text-xs rounded hover:bg-editor-hover" title="Undo (Ctrl+Z)">↩</button>
+          <button onClick={redo} className="px-2 py-1 text-xs rounded hover:bg-editor-hover" title="Redo (Ctrl+Y)">↪</button>
+
+          {/* Page */}
+          <div className="flex items-center gap-1 border-l border-editor-border pl-2 ml-1">
+            <span className="text-xs text-gray-400">{activePage + 1}/{pages.length}</span>
+            <button onClick={addPage} className="px-1.5 py-0.5 text-xs rounded hover:bg-editor-hover">+Page</button>
+          </div>
+
+          {/* Zoom */}
+          <div className="flex items-center gap-0.5 border-l border-editor-border pl-2 ml-1">
+            <button onClick={() => setZoom(zoom - 0.25)} className="w-6 h-6 text-xs rounded hover:bg-editor-hover flex items-center justify-center">-</button>
+            <button onClick={() => setZoom(1)} className="text-xs px-1 hover:bg-editor-hover rounded" title="Reset zoom">
+              {Math.round(zoom * 100)}%
+            </button>
+            <button onClick={() => setZoom(zoom + 0.25)} className="w-6 h-6 text-xs rounded hover:bg-editor-hover flex items-center justify-center">+</button>
+          </div>
+
+          {/* Export */}
+          <div className="flex gap-0.5 ml-auto relative">
+            <button
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              className="px-4 py-1.5 text-xs bg-editor-accent text-white rounded-md hover:bg-purple-600 transition-all shadow-sm shadow-purple-500/20 font-medium"
+            >
+              Export
+            </button>
+            {showExportMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+                <div className="absolute right-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-56">
+                  <button onClick={handleExportPdfClient} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
+                    <span className="text-red-400">📄</span> Export as PDF (Client)
+                  </button>
+                  <button onClick={handleExportPdfServer} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
+                    <span className="text-blue-400">📄</span> Export as PDF (Server)
+                  </button>
+                  <div className="border-t border-editor-border my-1" />
+                  <button onClick={handleExportJson} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
+                    <span className="text-yellow-400">📋</span> Export as JSON
+                  </button>
+                  <button onClick={handleLoadJson} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
+                    <span className="text-green-400">📂</span> Load JSON file
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- DESIGN MODE TOOLBAR (default) ----
   return (
     <div className="bg-editor-surface border-b border-editor-border flex items-center gap-1 px-2 py-1.5 flex-shrink-0 flex-wrap">
+      {/* Text Editor Mode toggle */}
+      <button
+        onClick={() => setEditorMode('textEditor')}
+        className="px-2.5 py-1.5 text-xs bg-editor-bg text-editor-text rounded-md hover:bg-editor-hover transition-all border border-editor-border mr-1"
+        title="Switch to Text Editor mode (like Microsoft Word)"
+      >
+        Text Editor
+      </button>
+      <div className="w-px h-6 bg-editor-border mr-1" />
+
       {/* Tool buttons */}
       <div className="flex gap-0.5 border-r border-editor-border pr-2 mr-1">
         {tools.map((tool) => (
@@ -244,38 +434,40 @@ export function Toolbar() {
         </div>
       )}
 
-      {/* Image menu (upload file or URL) */}
+      {/* Image menu (upload file or URL) — FIXED: absolute positioning relative to toolbar */}
       {showImageMenu && (
-        <div className="relative">
+        <>
           <div className="fixed inset-0 z-40" onClick={() => { setShowImageMenu(false); setShowImageUrlInput(false); }} />
-          <div className="absolute left-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-52">
-            <button onClick={() => { handleInsertImage(); setShowImageMenu(false); }}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-editor-hover flex items-center gap-2">
-              📁 Upload from File
-            </button>
-            <button onClick={() => setShowImageUrlInput(!showImageUrlInput)}
-              className="w-full text-left px-3 py-1.5 text-xs hover:bg-editor-hover flex items-center gap-2">
-              🔗 Insert from URL
-            </button>
-            {showImageUrlInput && (
-              <div className="px-3 py-1.5 space-y-1 border-t border-editor-border mt-1">
-                <input
-                  type="text"
-                  value={imageUrlValue}
-                  onChange={(e) => setImageUrlValue(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { insertImageFromUrl(imageUrlValue); setShowImageMenu(false); } }}
-                  placeholder="https://..."
-                  className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1 focus:border-editor-accent outline-none"
-                  autoFocus
-                />
-                <button onClick={() => { insertImageFromUrl(imageUrlValue); setShowImageMenu(false); }}
-                  className="w-full px-2 py-1 text-xs bg-editor-accent text-white rounded hover:bg-purple-600">
-                  Insert
-                </button>
-              </div>
-            )}
+          <div className="fixed z-50" style={{ top: '40px', left: tools.findIndex(t => t.id === 'image') * 32 + 80 + 'px' }}>
+            <div className="bg-editor-surface border border-editor-border rounded-lg shadow-xl py-1 w-52">
+              <button onClick={() => { handleInsertImage(); setShowImageMenu(false); }}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-editor-hover flex items-center gap-2">
+                📁 Upload from File
+              </button>
+              <button onClick={() => setShowImageUrlInput(!showImageUrlInput)}
+                className="w-full text-left px-3 py-1.5 text-xs hover:bg-editor-hover flex items-center gap-2">
+                🔗 Insert from URL
+              </button>
+              {showImageUrlInput && (
+                <div className="px-3 py-1.5 space-y-1 border-t border-editor-border mt-1">
+                  <input
+                    type="text"
+                    value={imageUrlValue}
+                    onChange={(e) => setImageUrlValue(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { insertImageFromUrl(imageUrlValue); setShowImageMenu(false); } }}
+                    placeholder="https://..."
+                    className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1 focus:border-editor-accent outline-none"
+                    autoFocus
+                  />
+                  <button onClick={() => { insertImageFromUrl(imageUrlValue); setShowImageMenu(false); }}
+                    className="w-full px-2 py-1 text-xs bg-editor-accent text-white rounded hover:bg-purple-600">
+                    Insert
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* Font */}
