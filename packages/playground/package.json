@@ -8,12 +8,13 @@
     "start": "next start"
   },
   "dependencies": {
+    "@pdf-builder/sdk": "file:../sdk",
+    "lucide-react": "^1.7.0",
     "next": "^14.2.0",
+    "pdf-builder-wasm": "file:../wasm/pkg",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
-    "zustand": "^4.5.0",
-    "@pdf-builder/sdk": "file:../sdk",
-    "pdf-builder-wasm": "file:../wasm/pkg"
+    "zustand": "^4.5.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

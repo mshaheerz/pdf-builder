@@ -231,6 +231,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   },
   setEditingTextId: (id) => set({ editingTextId: id, editingTableId: null }),
   setEditingCursorPos: (pos) => set({ editingCursorPos: pos, editingSelectionStart: null, editingSelectionEnd: null, pendingStyle: null }),
+  setEditingCursorPosKeepSelection: (pos: number) => set({ editingCursorPos: pos }),
   setEditingSelection: (start, end) => set({ editingSelectionStart: start, editingSelectionEnd: end }),
   setPendingStyle: (style) => set({ pendingStyle: style }),
   setEditingTable: (id, row = 0, col = 0) => set({ editingTableId: id, editingTableRow: row, editingTableCol: col, editingTableCursorPos: 0, editingTextId: null }),
@@ -314,7 +315,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     const body: DocumentBodyElement = {
       id: newId, type: 'documentBody',
       x: margin, y: margin, width: page.width - margin * 2, height: page.height - margin,
-      rotation: 0, opacity: 1, locked: true, visible: true, name: 'Document Body',
+      rotation: 0, opacity: 1, locked: false, visible: true, name: 'Document Body',
       content: '', spans: [{ text: '' }], font: state.currentFont, fontSize: state.currentFontSize,
       fontWeight: 'normal', fontStyle: 'normal',
       color: state.currentColor, align: 'left', lineHeight: 1.2, decoration: 'none',

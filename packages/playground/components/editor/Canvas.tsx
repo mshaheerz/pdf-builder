@@ -102,11 +102,14 @@ export function Canvas() {
   const hitTest = useCallback((px: number, py: number, elements: Element[]): Element | null => {
     for (let i = elements.length - 1; i >= 0; i--) {
       const el = elements[i];
-      if (!el.visible || el.locked || el.type === 'documentBody') continue;
+      if (!el.visible) continue;
+      // In text editor mode, skip documentBody (it's the editing surface)
+      if (el.type === 'documentBody' && editorMode === 'textEditor') continue;
+      if (el.locked) continue;
       if (hitTestElement(px, py, el)) return el;
     }
     return null;
-  }, []);
+  }, [editorMode]);
 
   // Check resize handle hit
   const hitTestResizeHandle = useCallback((px: number, py: number, el: Element): string | null => {
