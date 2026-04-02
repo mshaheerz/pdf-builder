@@ -216,9 +216,10 @@ export function Canvas() {
 
     // Get total line width for alignment
     const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
+    const lineAlign = line.align || el.align;
     let lineX = el.x;
-    if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
-    else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
+    if (lineAlign === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+    else if (lineAlign === 'right') lineX = el.x + el.width - totalLineWidth;
 
     const relX = px - lineX;
     if (relX <= 0) return line.startOffset;
@@ -443,7 +444,7 @@ export function Canvas() {
         const newPos = clickToBodyCursorPos(x, y, bodyEl);
         const anchor = dragStart.x; // We stored anchor cursor pos in dragStart.x
         store.setEditingSelection(anchor, newPos);
-        store.setEditingCursorPos(newPos);
+        store.setEditingCursorPosKeepSelection(newPos);
       }
       return;
     }
@@ -722,7 +723,7 @@ export function Canvas() {
                   if (e.shiftKey) {
                     const anchor = selStart !== null ? selStart : pos;
                     store.setEditingSelection(anchor, newPos);
-                    store.setEditingCursorPos(newPos);
+                    store.setEditingCursorPosKeepSelection(newPos);
                   } else {
                     store.setEditingCursorPos(newPos);
                   }
@@ -756,7 +757,7 @@ export function Canvas() {
                   if (e.shiftKey) {
                     const anchor = selStart !== null ? selStart : pos;
                     store.setEditingSelection(anchor, newPos);
-                    store.setEditingCursorPos(newPos);
+                    store.setEditingCursorPosKeepSelection(newPos);
                   } else {
                     store.setEditingCursorPos(newPos);
                   }
@@ -806,7 +807,7 @@ export function Canvas() {
             const anchor = selStart !== null ? selStart : pos;
             const newPos = Math.max(0, pos - 1);
             store.setEditingSelection(anchor, newPos);
-            store.setEditingCursorPos(newPos);
+            store.setEditingCursorPosKeepSelection(newPos);
           } else {
             if (hasSelection) {
               store.setEditingCursorPos(selMin);
@@ -821,7 +822,7 @@ export function Canvas() {
             const anchor = selStart !== null ? selStart : pos;
             const newPos = Math.min(content.length, pos + 1);
             store.setEditingSelection(anchor, newPos);
-            store.setEditingCursorPos(newPos);
+            store.setEditingCursorPosKeepSelection(newPos);
           } else {
             if (hasSelection) {
               store.setEditingCursorPos(selMax);
@@ -1449,9 +1450,10 @@ function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyEleme
 
       // Compute x positions for highlight range
       const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
+      const lineAlign = line.align || el.align;
       let lineX = el.x;
-      if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
-      else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
+      if (lineAlign === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+      else if (lineAlign === 'right') lineX = el.x + el.width - totalLineWidth;
 
       let startX = lineX;
       let endX = lineX;
@@ -1484,9 +1486,10 @@ function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyEleme
   // Render text runs
   for (const line of wrappedLines) {
     const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
+    const lineAlign = line.align || el.align;
     let lineX = el.x;
-    if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
-    else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
+    if (lineAlign === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+    else if (lineAlign === 'right') lineX = el.x + el.width - totalLineWidth;
 
     for (const run of line.runs) {
       const fontStr = `${run.fontStyle === 'italic' ? 'italic' : ''} ${run.fontWeight === 'bold' ? 'bold' : ''} ${run.fontSize}px ${run.font}`.trim();
@@ -1528,9 +1531,10 @@ function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyEleme
     for (const line of wrappedLines) {
       if (cursorPos >= line.startOffset && cursorPos <= line.endOffset) {
         const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
+        const lineAlign = line.align || el.align;
         let lineX = el.x;
-        if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
-        else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
+        if (lineAlign === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+        else if (lineAlign === 'right') lineX = el.x + el.width - totalLineWidth;
 
         let charOff = line.startOffset;
         cursorX = lineX;

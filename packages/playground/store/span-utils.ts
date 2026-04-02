@@ -26,6 +26,7 @@ export interface WrappedLine {
   y: number;
   startOffset: number;
   endOffset: number;
+  align?: 'left' | 'center' | 'right' | 'justify';
 }
 
 export function getPlainText(spans: TextSpan[]): string {
@@ -136,7 +137,7 @@ export function applyStyle(spans: TextSpan[], start: number, end: number, style:
 }
 
 function spanStyleKey(span: TextSpan): string {
-  return `${span.font ?? ''}|${span.fontSize ?? ''}|${span.fontWeight ?? ''}|${span.fontStyle ?? ''}|${span.color ?? ''}|${span.decoration ?? ''}`;
+  return `${span.font ?? ''}|${span.fontSize ?? ''}|${span.fontWeight ?? ''}|${span.fontStyle ?? ''}|${span.color ?? ''}|${span.decoration ?? ''}|${span.align ?? ''}`;
 }
 
 export function mergeAdjacentSpans(spans: TextSpan[]): TextSpan[] {
@@ -153,6 +154,15 @@ export function mergeAdjacentSpans(spans: TextSpan[]): TextSpan[] {
   return result;
 }
 
+/** Find the start and end offsets of the paragraph containing `offset` */
+export function getParagraphRange(text: string, offset: number): { start: number; end: number } {
+  let start = text.lastIndexOf('\n', offset - 1);
+  start = start === -1 ? 0 : start + 1;
+  let end = text.indexOf('\n', offset);
+  end = end === -1 ? text.length : end;
+  return { start, end };
+}
+
 export function wrapTextSpans(
   ctx: CanvasRenderingContext2D,
   spans: TextSpan[],
@@ -167,13 +177,13 @@ export function wrapTextSpans(
   }
 
   // Build a flat list of characters with their styles
-  type CharInfo = { char: string; style: ReturnType<typeof resolveSpanStyle>; globalOffset: number };
+  type CharInfo = { char: string; style: ReturnType<typeof resolveSpanStyle>; globalOffset: number; align?: 'left' | 'center' | 'right' | 'justify' };
   const chars: CharInfo[] = [];
   let offset = 0;
   for (const span of spans) {
     const style = resolveSpanStyle(span, defaults);
     for (let i = 0; i < span.text.length; i++) {
-      chars.push({ char: span.text[i], style, globalOffset: offset + i });
+      chars.push({ char: span.text[i], style, globalOffset: offset + i, align: span.align });
     }
     offset += span.text.length;
   }
@@ -189,6 +199,7 @@ export function wrapTextSpans(
         y: startY + lines.length * lineHeight,
         startOffset: chars[lineStart].globalOffset,
         endOffset: chars[lineStart].globalOffset + 1,
+        align: chars[lineStart].align,
       });
       lineStart++;
       continue;
@@ -250,6 +261,7 @@ export function wrapTextSpans(
       y: startY + lines.length * lineHeight,
       startOffset: chars[lineStart].globalOffset,
       endOffset: lineEnd < chars.length ? chars[lineEnd].globalOffset : plainText.length,
+      align: chars[lineStart].align,
     });
 
     // Skip trailing space at line break

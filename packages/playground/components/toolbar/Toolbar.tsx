@@ -3,7 +3,7 @@
 import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextSpan } from '@/store/document-store';
 import { useCallback, useState } from 'react';
 import { exportPdfWasm } from '@/lib/pdf-export';
-import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle } from '@/store/span-utils';
+import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle, getParagraphRange } from '@/store/span-utils';
 import {
   MousePointer2, Type, Square, Table2, ImageIcon, Pencil, Highlighter, Eraser, Hand,
   Bold, Italic, Underline, Strikethrough,
@@ -358,12 +358,54 @@ export function Toolbar() {
           <div className="w-px h-6 bg-editor-border mx-1" />
 
           {/* Alignment */}
-          {([['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight], ['justify', AlignJustify]] as const).map(([align, Icon]) => (
-            <button key={align} onClick={() => updateSelectedText({ align })}
-              className={`${iconBtn} ${selectedTextEl?.align === align ? iconBtnActive : iconBtnNormal}`} title={align.charAt(0).toUpperCase() + align.slice(1)}>
-              <Icon size={14} />
-            </button>
-          ))}
+          {([['left', AlignLeft], ['center', AlignCenter], ['right', AlignRight], ['justify', AlignJustify]] as const).map(([alignVal, Icon]) => {
+            const currentAlign = (() => {
+              if (isTextEditorMode && bodyEl) {
+                // Get alignment from current paragraph's spans
+                const spans: TextSpan[] = (bodyEl as any).spans || [{ text: (bodyEl as any).content || '' }];
+                const plainText = getPlainText(spans);
+                const pos = useDocumentStore.getState().editingCursorPos;
+                const { start } = getParagraphRange(plainText, pos);
+                const { spanIndex } = offsetToSpanPos(spans, start);
+                return spans[spanIndex]?.align || selectedTextEl?.align || 'left';
+              }
+              return selectedTextEl?.align || 'left';
+            })();
+            return (
+              <button key={alignVal} onClick={() => {
+                if (isTextEditorMode && bodyEl) {
+                  const body = bodyEl as any;
+                  const spans: TextSpan[] = body.spans || [{ text: body.content || '' }];
+                  const plainText = getPlainText(spans);
+                  const store = useDocumentStore.getState();
+                  const pos = store.editingCursorPos;
+                  const selStart = store.editingSelectionStart;
+                  const selEnd = store.editingSelectionEnd;
+                  const hasSel = selStart !== null && selEnd !== null && selStart !== selEnd;
+                  // Get paragraph range(s) to apply alignment to
+                  let rangeStart: number, rangeEnd: number;
+                  if (hasSel) {
+                    const sMin = Math.min(selStart!, selEnd!);
+                    const sMax = Math.max(selStart!, selEnd!);
+                    rangeStart = getParagraphRange(plainText, sMin).start;
+                    rangeEnd = getParagraphRange(plainText, sMax).end;
+                  } else {
+                    const para = getParagraphRange(plainText, pos);
+                    rangeStart = para.start;
+                    rangeEnd = para.end;
+                  }
+                  // Apply align to all spans in the paragraph range
+                  const newSpans = applyStyle(spans, rangeStart, Math.max(rangeStart + 1, rangeEnd), { align: alignVal } as Partial<TextSpan>);
+                  updateElement(activePage, selectedTextEl!.id, { spans: newSpans, content: getPlainText(newSpans) } as any);
+                } else {
+                  updateSelectedText({ align: alignVal });
+                }
+              }}
+                className={`${iconBtn} ${currentAlign === alignVal ? iconBtnActive : iconBtnNormal}`} title={alignVal.charAt(0).toUpperCase() + alignVal.slice(1)}>
+                <Icon size={14} />
+              </button>
+            );
+          })}
 
           <div className="w-px h-6 bg-editor-border mx-1" />
 

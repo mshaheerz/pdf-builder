@@ -164,6 +164,7 @@ export interface TextSpan {
   fontStyle?: 'normal' | 'italic';
   color?: string;
   decoration?: 'none' | 'underline' | 'strikethrough';
+  align?: TextAlign;
 }
 
 export interface DocumentBodyElement extends BaseElement {

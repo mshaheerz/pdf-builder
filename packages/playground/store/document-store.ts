@@ -74,6 +74,7 @@ interface DocumentState {
   setEditorMode: (mode: EditorMode) => void;
   setEditingTextId: (id: string | null) => void;
   setEditingCursorPos: (pos: number) => void;
+  setEditingCursorPosKeepSelection: (pos: number) => void;
   setEditingSelection: (start: number | null, end: number | null) => void;
   setPendingStyle: (style: Partial<TextSpan> | null) => void;
   setEditingTable: (id: string | null, row?: number, col?: number) => void;
