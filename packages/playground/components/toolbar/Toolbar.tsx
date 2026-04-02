@@ -1,8 +1,26 @@
 'use client';
 
-import { useDocumentStore, generateId, type EditorTool, type ShapeType } from '@/store/document-store';
-import { useCallback, useState } from 'react';
+import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextSpan } from '@/store/document-store';
+import { useCallback, useState, useRef } from 'react';
 import { exportPdfWasm } from '@/lib/pdf-export';
+import { applyStyle, getPlainText, mergeAdjacentSpans, offsetToSpanPos, resolveSpanStyle } from '@/store/span-utils';
+
+/** Prevent toolbar interactions from stealing focus away from canvas */
+function preventFocusLoss(e: React.MouseEvent) {
+  // Don't prevent default on selects/inputs — they need native interaction
+  const tag = (e.target as HTMLElement).tagName;
+  if (tag === 'SELECT' || tag === 'INPUT') return;
+  e.preventDefault();
+}
+
+/** After a toolbar select/input change, blur it so keyboard events flow to the canvas again */
+function blurAfterChange() {
+  requestAnimationFrame(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+}
 
 const tools: { id: EditorTool; icon: string; label: string }[] = [
   { id: 'select', icon: '↖', label: 'Select (V)' },
@@ -81,6 +99,8 @@ export function Toolbar() {
     undo, redo, pushHistory, exportToJson, getNextYPosition,
     editorMode, setEditorMode,
     selectedIds, updateElement,
+    editingSelectionStart, editingSelectionEnd, editingCursorPos,
+    pendingStyle, setPendingStyle,
   } = useDocumentStore();
 
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -202,45 +222,110 @@ export function Toolbar() {
     setShowExportMenu(false);
   }, []);
 
+  const hasSelection = editingSelectionStart !== null && editingSelectionEnd !== null && editingSelectionStart !== editingSelectionEnd;
+  const selMin = hasSelection ? Math.min(editingSelectionStart!, editingSelectionEnd!) : 0;
+  const selMax = hasSelection ? Math.max(editingSelectionStart!, editingSelectionEnd!) : 0;
+
+  // Get the style at the current cursor position (for toolbar display)
+  const getStyleAtCursor = (): Partial<TextSpan> => {
+    if (!bodyEl) return {};
+    const body = bodyEl as any;
+    const spans: TextSpan[] = body.spans || [{ text: body.content || '' }];
+    if (spans.length === 0) return {};
+    const pos = hasSelection ? selMin : editingCursorPos;
+    const { spanIndex } = offsetToSpanPos(spans, Math.max(0, pos > 0 ? pos - 1 : 0));
+    const span = spans[spanIndex];
+    const defaults = { font: body.font, fontSize: body.fontSize, fontWeight: body.fontWeight, fontStyle: body.fontStyle, color: body.color, decoration: body.decoration };
+    return resolveSpanStyle(span, defaults);
+  };
+
+  const cursorStyle = isTextEditorMode ? (pendingStyle || getStyleAtCursor()) : {};
+
   const updateSelectedText = (updates: any) => {
-    if (selectedTextEl) {
-      updateElement(activePage, selectedTextEl.id, updates);
+    if (!selectedTextEl) return;
+
+    // For documentBody with spans
+    if (isTextEditorMode && bodyEl) {
+      const body = bodyEl as any;
+      const spans: TextSpan[] = body.spans || [{ text: body.content || '' }];
+
+      // Style properties that apply per-span
+      const spanStyleKeys = ['font', 'fontSize', 'fontWeight', 'fontStyle', 'color', 'decoration'];
+      const spanUpdates: Partial<TextSpan> = {};
+      const elementUpdates: any = {};
+      for (const [k, v] of Object.entries(updates)) {
+        if (spanStyleKeys.includes(k)) {
+          (spanUpdates as any)[k] = v;
+        } else {
+          elementUpdates[k] = v;
+        }
+      }
+
+      // Element-level properties (align, lineHeight) always apply to whole element
+      if (Object.keys(elementUpdates).length > 0) {
+        updateElement(activePage, selectedTextEl.id, elementUpdates);
+      }
+
+      // Span-level style
+      if (Object.keys(spanUpdates).length > 0) {
+        if (hasSelection) {
+          const newSpans = applyStyle(spans, selMin, selMax, spanUpdates);
+          updateElement(activePage, selectedTextEl.id, { spans: newSpans, content: getPlainText(newSpans) } as any);
+        } else {
+          // No selection → set pending style for next typed char
+          setPendingStyle({ ...pendingStyle, ...spanUpdates });
+        }
+      }
+      return;
     }
+
+    // Non-span elements
+    updateElement(activePage, selectedTextEl.id, updates);
   };
 
   // ---- TEXT EDITOR MODE TOOLBAR ----
   if (isTextEditorMode) {
     return (
-      <div className="bg-editor-surface border-b border-editor-border flex flex-col flex-shrink-0">
+      <div className="bg-editor-surface border-b border-editor-border flex flex-col flex-shrink-0" onMouseDown={preventFocusLoss}>
         {/* Top row: mode toggle + font + export */}
         <div className="flex items-center gap-1 px-2 py-1.5 flex-wrap">
           {/* Mode toggle */}
-          <button
-            onClick={() => setEditorMode('design')}
-            className="px-3 py-1.5 text-xs bg-editor-bg text-editor-text rounded-md hover:bg-editor-hover transition-all border border-editor-border mr-1"
-            title="Switch to Design mode"
-          >
-            Design Mode
-          </button>
+          <div className="flex rounded-md overflow-hidden border border-editor-border mr-1">
+            <button
+              onClick={() => setEditorMode('design')}
+              className="px-3 py-1.5 text-xs bg-editor-bg text-editor-text hover:bg-editor-hover transition-all"
+              title="Switch to Design mode"
+            >
+              Design
+            </button>
+            <button
+              className="px-3 py-1.5 text-xs bg-editor-accent text-white transition-all cursor-default"
+              title="Text Editor mode (active)"
+            >
+              Text Editor
+            </button>
+          </div>
           <div className="w-px h-6 bg-editor-border mx-1" />
 
           {/* Font */}
-          <select value={selectedTextEl?.font || currentFont} onChange={(e) => {
+          <select value={cursorStyle.font || selectedTextEl?.font || currentFont} onChange={(e) => {
             setCurrentFont(e.target.value);
             updateSelectedText({ font: e.target.value });
+            blurAfterChange();
           }}
             className="bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1 py-1 w-32"
-            style={{ fontFamily: selectedTextEl?.font || currentFont }}>
+            style={{ fontFamily: cursorStyle.font || selectedTextEl?.font || currentFont }}>
             {fonts.map((f) => (
               <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>
             ))}
           </select>
 
           {/* Font size */}
-          <select value={selectedTextEl?.fontSize || currentFontSize} onChange={(e) => {
+          <select value={cursorStyle.fontSize || selectedTextEl?.fontSize || currentFontSize} onChange={(e) => {
             const size = Number(e.target.value);
             setCurrentFontSize(size);
             updateSelectedText({ fontSize: size });
+            blurAfterChange();
           }}
             className="bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1 py-1 w-14">
             {fontSizes.map((s) => (
@@ -252,35 +337,39 @@ export function Toolbar() {
 
           {/* Bold / Italic / Underline / Strikethrough */}
           <button onClick={() => {
-            const v = selectedTextEl?.fontWeight === 'bold' ? 'normal' : 'bold';
+            const current = cursorStyle.fontWeight || selectedTextEl?.fontWeight;
+            const v = current === 'bold' ? 'normal' : 'bold';
             updateSelectedText({ fontWeight: v });
           }}
             className={`w-7 h-7 flex items-center justify-center rounded text-xs font-bold transition-colors ${
-              selectedTextEl?.fontWeight === 'bold' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+              (cursorStyle.fontWeight || selectedTextEl?.fontWeight) === 'bold' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
             }`} title="Bold">B</button>
 
           <button onClick={() => {
-            const v = selectedTextEl?.fontStyle === 'italic' ? 'normal' : 'italic';
+            const current = cursorStyle.fontStyle || selectedTextEl?.fontStyle;
+            const v = current === 'italic' ? 'normal' : 'italic';
             updateSelectedText({ fontStyle: v });
           }}
             className={`w-7 h-7 flex items-center justify-center rounded text-xs italic transition-colors ${
-              selectedTextEl?.fontStyle === 'italic' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+              (cursorStyle.fontStyle || selectedTextEl?.fontStyle) === 'italic' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
             }`} title="Italic">I</button>
 
           <button onClick={() => {
-            const v = selectedTextEl?.decoration === 'underline' ? 'none' : 'underline';
+            const current = cursorStyle.decoration || selectedTextEl?.decoration;
+            const v = current === 'underline' ? 'none' : 'underline';
             updateSelectedText({ decoration: v });
           }}
             className={`w-7 h-7 flex items-center justify-center rounded text-xs underline transition-colors ${
-              selectedTextEl?.decoration === 'underline' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+              (cursorStyle.decoration || selectedTextEl?.decoration) === 'underline' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
             }`} title="Underline">U</button>
 
           <button onClick={() => {
-            const v = selectedTextEl?.decoration === 'strikethrough' ? 'none' : 'strikethrough';
+            const current = cursorStyle.decoration || selectedTextEl?.decoration;
+            const v = current === 'strikethrough' ? 'none' : 'strikethrough';
             updateSelectedText({ decoration: v });
           }}
             className={`w-7 h-7 flex items-center justify-center rounded text-xs line-through transition-colors ${
-              selectedTextEl?.decoration === 'strikethrough' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
+              (cursorStyle.decoration || selectedTextEl?.decoration) === 'strikethrough' ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
             }`} title="Strikethrough">S</button>
 
           <div className="w-px h-6 bg-editor-border mx-1" />
@@ -291,7 +380,12 @@ export function Toolbar() {
               className={`w-7 h-7 flex items-center justify-center rounded text-[10px] transition-colors ${
                 selectedTextEl?.align === align ? 'bg-editor-accent text-white' : 'bg-editor-bg text-editor-text hover:bg-editor-hover'
               }`} title={align.charAt(0).toUpperCase() + align.slice(1)}>
-              {align === 'left' ? '☰' : align === 'center' ? '☰' : align === 'right' ? '☰' : '☰'}
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+                {align === 'left' && <><rect x="0" y="1" width="12" height="1.5"/><rect x="0" y="4.5" width="8" height="1.5"/><rect x="0" y="8" width="10" height="1.5"/></>}
+                {align === 'center' && <><rect x="0" y="1" width="12" height="1.5"/><rect x="2" y="4.5" width="8" height="1.5"/><rect x="1" y="8" width="10" height="1.5"/></>}
+                {align === 'right' && <><rect x="0" y="1" width="12" height="1.5"/><rect x="4" y="4.5" width="8" height="1.5"/><rect x="2" y="8" width="10" height="1.5"/></>}
+                {align === 'justify' && <><rect x="0" y="1" width="12" height="1.5"/><rect x="0" y="4.5" width="12" height="1.5"/><rect x="0" y="8" width="12" height="1.5"/></>}
+              </svg>
             </button>
           ))}
 
@@ -300,9 +394,10 @@ export function Toolbar() {
           {/* Text color */}
           <div className="flex items-center gap-0.5">
             <span className="text-[10px] text-gray-400">Color</span>
-            <input type="color" value={selectedTextEl?.color || currentColor} onChange={(e) => {
+            <input type="color" value={cursorStyle.color || selectedTextEl?.color || currentColor} onChange={(e) => {
               setCurrentColor(e.target.value);
               updateSelectedText({ color: e.target.value });
+              blurAfterChange();
             }}
               className="w-6 h-6 rounded cursor-pointer border border-editor-border" />
           </div>
@@ -310,7 +405,7 @@ export function Toolbar() {
           {/* Line Height */}
           <div className="flex items-center gap-0.5">
             <span className="text-[10px] text-gray-400">LH</span>
-            <select value={selectedTextEl?.lineHeight || 1.2} onChange={(e) => updateSelectedText({ lineHeight: parseFloat(e.target.value) })}
+            <select value={selectedTextEl?.lineHeight || 1.2} onChange={(e) => { updateSelectedText({ lineHeight: parseFloat(e.target.value) }); blurAfterChange(); }}
               className="bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-1 py-0.5 w-12">
               {[1, 1.15, 1.2, 1.5, 1.75, 2, 2.5, 3].map((v) => (
                 <option key={v} value={v}>{v}</option>
@@ -376,14 +471,22 @@ export function Toolbar() {
   // ---- DESIGN MODE TOOLBAR (default) ----
   return (
     <div className="bg-editor-surface border-b border-editor-border flex items-center gap-1 px-2 py-1.5 flex-shrink-0 flex-wrap">
-      {/* Text Editor Mode toggle */}
-      <button
-        onClick={() => setEditorMode('textEditor')}
-        className="px-2.5 py-1.5 text-xs bg-editor-bg text-editor-text rounded-md hover:bg-editor-hover transition-all border border-editor-border mr-1"
-        title="Switch to Text Editor mode (like Microsoft Word)"
-      >
-        Text Editor
-      </button>
+      {/* Mode toggle */}
+      <div className="flex rounded-md overflow-hidden border border-editor-border mr-1">
+        <button
+          className="px-3 py-1.5 text-xs bg-editor-accent text-white transition-all cursor-default"
+          title="Design mode (active)"
+        >
+          Design
+        </button>
+        <button
+          onClick={() => setEditorMode('textEditor')}
+          className="px-3 py-1.5 text-xs bg-editor-bg text-editor-text hover:bg-editor-hover transition-all"
+          title="Switch to Text Editor mode"
+        >
+          Text Editor
+        </button>
+      </div>
       <div className="w-px h-6 bg-editor-border mr-1" />
 
       {/* Tool buttons */}

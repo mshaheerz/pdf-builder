@@ -5,14 +5,14 @@ import type {
   TextAlign, VerticalAlign, ShapeType, EditorTool, EditorMode,
   Fill, BorderStyle, BaseElement, TextElement, ShapeElement,
   ImageElement, TableElement, DrawingElement, DocumentBodyElement,
-  Element, Page,
+  Element, Page, TextSpan,
 } from '@pdf-builder/sdk';
 
 export type {
   TextAlign, VerticalAlign, ShapeType, EditorTool, EditorMode,
   Fill, BorderStyle, BaseElement, TextElement, ShapeElement,
   ImageElement, TableElement, DrawingElement, DocumentBodyElement,
-  Element, Page,
+  Element, Page, TextSpan,
 };
 
 // ============================================================================
@@ -41,6 +41,7 @@ interface DocumentState {
   editingCursorPos: number;
   editingSelectionStart: number | null;
   editingSelectionEnd: number | null;
+  pendingStyle: Partial<TextSpan> | null;
 
   // Inline table cell editing
   editingTableId: string | null;
@@ -74,6 +75,7 @@ interface DocumentState {
   setEditingTextId: (id: string | null) => void;
   setEditingCursorPos: (pos: number) => void;
   setEditingSelection: (start: number | null, end: number | null) => void;
+  setPendingStyle: (style: Partial<TextSpan> | null) => void;
   setEditingTable: (id: string | null, row?: number, col?: number) => void;
   setEditingTableCursorPos: (pos: number) => void;
   updateTableCell: (pageIndex: number, elementId: string, row: number, col: number, content: string) => void;
@@ -116,6 +118,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
   editingCursorPos: 0,
   editingSelectionStart: null,
   editingSelectionEnd: null,
+  pendingStyle: null,
   editingTableId: null,
   editingTableRow: 0,
   editingTableCol: 0,
@@ -227,8 +230,9 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     }
   },
   setEditingTextId: (id) => set({ editingTextId: id, editingTableId: null }),
-  setEditingCursorPos: (pos) => set({ editingCursorPos: pos, editingSelectionStart: null, editingSelectionEnd: null }),
+  setEditingCursorPos: (pos) => set({ editingCursorPos: pos, editingSelectionStart: null, editingSelectionEnd: null, pendingStyle: null }),
   setEditingSelection: (start, end) => set({ editingSelectionStart: start, editingSelectionEnd: end }),
+  setPendingStyle: (style) => set({ pendingStyle: style }),
   setEditingTable: (id, row = 0, col = 0) => set({ editingTableId: id, editingTableRow: row, editingTableCol: col, editingTableCursorPos: 0, editingTextId: null }),
   setEditingTableCursorPos: (pos) => set({ editingTableCursorPos: pos }),
   updateTableCell: (pageIndex, elementId, row, col, content) => set((s) => {
@@ -284,6 +288,14 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     try {
       const data = JSON.parse(json);
       if (data.pages) {
+        // Migrate: add spans to documentBody elements that lack them
+        for (const page of data.pages) {
+          for (const el of page.elements) {
+            if (el.type === 'documentBody' && !el.spans) {
+              el.spans = [{ text: el.content || '' }];
+            }
+          }
+        }
         set({ pages: data.pages, activePage: 0, selectedIds: [], editingTextId: null });
       }
     } catch (e) {
@@ -303,7 +315,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       id: newId, type: 'documentBody',
       x: margin, y: margin, width: page.width - margin * 2, height: page.height - margin,
       rotation: 0, opacity: 1, locked: true, visible: true, name: 'Document Body',
-      content: '', font: state.currentFont, fontSize: state.currentFontSize,
+      content: '', spans: [{ text: '' }], font: state.currentFont, fontSize: state.currentFontSize,
       fontWeight: 'normal', fontStyle: 'normal',
       color: state.currentColor, align: 'left', lineHeight: 1.2, decoration: 'none',
       marginLeft: margin, marginRight: margin, marginTop: margin,

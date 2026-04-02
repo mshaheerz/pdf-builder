@@ -156,9 +156,20 @@ export interface DrawingElement extends BaseElement {
   }[];
 }
 
+export interface TextSpan {
+  text: string;
+  font?: string;
+  fontSize?: number;
+  fontWeight?: 'normal' | 'bold';
+  fontStyle?: 'normal' | 'italic';
+  color?: string;
+  decoration?: 'none' | 'underline' | 'strikethrough';
+}
+
 export interface DocumentBodyElement extends BaseElement {
   type: 'documentBody';
   content: string;
+  spans: TextSpan[];
   font: string;
   fontSize: number;
   fontWeight: 'normal' | 'bold';

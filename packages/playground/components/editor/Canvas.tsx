@@ -1,8 +1,9 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
-import { useDocumentStore, generateId, type Element, type ShapeElement, type EditorMode, type DocumentBodyElement } from '@/store/document-store';
+import { useDocumentStore, generateId, type Element, type ShapeElement, type EditorMode, type DocumentBodyElement, type TextSpan } from '@/store/document-store';
 import { wrapText } from '@/store/table-utils';
+import { getPlainText, insertText as spanInsertText, deleteRange as spanDeleteRange, wrapTextSpans, type SpanDefaults, type WrappedLine } from '@/store/span-utils';
 
 // ============================================================================
 // Image cache - prevents flicker
@@ -177,6 +178,16 @@ export function Canvas() {
     return null;
   }, []);
 
+  // Helper: get span defaults from a document body element
+  const getBodyDefaults = useCallback((el: DocumentBodyElement): SpanDefaults => ({
+    font: el.font || 'sans-serif',
+    fontSize: el.fontSize || 14,
+    fontWeight: el.fontWeight || 'normal',
+    fontStyle: el.fontStyle || 'normal',
+    color: el.color || '#000',
+    decoration: el.decoration || 'none',
+  }), []);
+
   // Helper: convert click coordinates to cursor position in document body
   const clickToBodyCursorPos = useCallback((px: number, py: number, el: DocumentBodyElement): number => {
     const canvas = canvasRef.current;
@@ -184,53 +195,54 @@ export function Canvas() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return 0;
 
-    const content = el.content || '';
-    if (!content) return 0;
+    const spans = el.spans || [{ text: el.content || '' }];
+    const plainText = getPlainText(spans);
+    if (!plainText) return 0;
 
-    const weight = el.fontWeight === 'bold' ? 'bold' : '';
-    const style = el.fontStyle === 'italic' ? 'italic' : '';
-    ctx.font = `${style} ${weight} ${el.fontSize || 14}px ${el.font || 'sans-serif'}`.trim();
-    const lines = wrapText(ctx, content, el.width);
-    const lineHeight = (el.fontSize || 14) * (el.lineHeight || 1.2);
+    const defaults = getBodyDefaults(el);
+    const lh = (el.fontSize || 14) * (el.lineHeight || 1.2);
+    const wrappedLines = wrapTextSpans(ctx, spans, el.width, defaults, lh, el.y);
 
     // Find which line from Y
     const relY = py - el.y;
-    let lineIndex = Math.floor(relY / lineHeight);
-    lineIndex = Math.max(0, Math.min(lines.length - 1, lineIndex));
+    let lineIndex = Math.floor(relY / lh);
+    lineIndex = Math.max(0, Math.min(wrappedLines.length - 1, lineIndex));
 
-    // Find character position on that line from X
-    const line = lines[lineIndex];
-    const lw = ctx.measureText(line).width;
+    const line = wrappedLines[lineIndex];
+    if (!line || line.runs.length === 0) return line ? line.startOffset : 0;
+
+    // Get total line width for alignment
+    const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
     let lineX = el.x;
-    if (el.align === 'center') lineX = el.x + (el.width - lw) / 2;
-    else if (el.align === 'right') lineX = el.x + el.width - lw;
+    if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+    else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
 
     const relX = px - lineX;
-    let charPos = 0;
-    for (let i = 0; i <= line.length; i++) {
-      const w = ctx.measureText(line.slice(0, i)).width;
-      if (w >= relX) {
-        // Check if closer to this char or previous
-        if (i > 0) {
-          const prevW = ctx.measureText(line.slice(0, i - 1)).width;
-          charPos = (relX - prevW < w - relX) ? i - 1 : i;
-        }
-        break;
-      }
-      charPos = i;
-    }
+    if (relX <= 0) return line.startOffset;
 
-    // Convert line index + charPos to absolute content position
-    let absPos = 0;
-    for (let i = 0; i < lineIndex; i++) {
-      absPos += lines[i].length;
-      // Account for whitespace/newline between lines
-      while (absPos < content.length && (content[absPos] === ' ' || content[absPos] === '\n')) {
-        absPos++;
+    // Walk through runs to find char position
+    let runX = 0;
+    let charOffset = line.startOffset;
+    for (const run of line.runs) {
+      const style = run;
+      const fontStr = `${style.fontStyle === 'italic' ? 'italic' : ''} ${style.fontWeight === 'bold' ? 'bold' : ''} ${style.fontSize}px ${style.font}`.trim();
+      ctx.font = fontStr;
+
+      for (let i = 0; i <= run.text.length; i++) {
+        const w = runX + ctx.measureText(run.text.slice(0, i)).width;
+        if (w >= relX) {
+          if (i > 0) {
+            const prevW = runX + ctx.measureText(run.text.slice(0, i - 1)).width;
+            return charOffset + ((relX - prevW < w - relX) ? i - 1 : i);
+          }
+          return charOffset;
+        }
       }
+      runX += run.width;
+      charOffset += run.text.length;
     }
-    return Math.min(absPos + charPos, content.length);
-  }, []);
+    return Math.min(charOffset, plainText.length);
+  }, [getBodyDefaults]);
 
   // ========================================================================
   // Mouse Handlers
@@ -261,8 +273,8 @@ export function Canvas() {
 
       // Any click (on page or outside) → ensure body editing stays active
       if (bodyEl) {
+        setEditingTable(null);  // Must come before setEditingTextId (setEditingTable clears editingTextId)
         setEditingTextId(bodyId);
-        setEditingTable(null);
         setSelectedIds([]);
         if (isInsidePage(x, y)) {
           const cursorPos = clickToBodyCursorPos(x, y, bodyEl);
@@ -597,7 +609,9 @@ export function Canvas() {
         if (!el) return;
 
         e.preventDefault();
+        const isDocBody = el.type === 'documentBody';
         const content = el.content || '';
+        const spans: TextSpan[] = isDocBody ? (el.spans || [{ text: content }]) : null;
         const pos = store.editingCursorPos;
         const selStart = store.editingSelectionStart;
         const selEnd = store.editingSelectionEnd;
@@ -605,10 +619,14 @@ export function Canvas() {
         const selMin = hasSelection ? Math.min(selStart!, selEnd!) : pos;
         const selMax = hasSelection ? Math.max(selStart!, selEnd!) : pos;
 
-        // Helper: delete selected text and return new content + cursor pos
-        const deleteSelection = (): { newContent: string; newPos: number } | null => {
-          if (!hasSelection) return null;
-          return { newContent: content.slice(0, selMin) + content.slice(selMax), newPos: selMin };
+        // Helper for non-span (plain text) elements
+        const updatePlainText = (newContent: string) => {
+          store.updateElement(store.activePage, el.id, { content: newContent } as any);
+        };
+
+        // Helper for span-based updates
+        const updateSpans = (newSpans: TextSpan[]) => {
+          store.updateElement(store.activePage, el.id, { spans: newSpans, content: getPlainText(newSpans) } as any);
         };
 
         if (e.key === 'Escape') {
@@ -640,9 +658,13 @@ export function Canvas() {
         if ((e.ctrlKey || e.metaKey) && e.key === 'x') {
           if (hasSelection) {
             navigator.clipboard.writeText(content.slice(selMin, selMax));
-            const d = deleteSelection()!;
-            store.updateElement(store.activePage, el.id, { content: d.newContent } as any);
-            store.setEditingCursorPos(d.newPos);
+            if (isDocBody) {
+              const newSpans = spanDeleteRange(spans, selMin, selMax);
+              updateSpans(newSpans);
+            } else {
+              updatePlainText(content.slice(0, selMin) + content.slice(selMax));
+            }
+            store.setEditingCursorPos(selMin);
           }
           return;
         }
@@ -657,8 +679,15 @@ export function Canvas() {
             const curHasSel = s.editingSelectionStart !== null && s.editingSelectionEnd !== null && s.editingSelectionStart !== s.editingSelectionEnd;
             const cMin = curHasSel ? Math.min(s.editingSelectionStart!, s.editingSelectionEnd!) : s.editingCursorPos;
             const cMax = curHasSel ? Math.max(s.editingSelectionStart!, s.editingSelectionEnd!) : s.editingCursorPos;
-            const newContent = curContent.slice(0, cMin) + text + curContent.slice(cMax);
-            s.updateElement(s.activePage, curEl.id, { content: newContent } as any);
+            if (curEl.type === 'documentBody') {
+              let curSpans: TextSpan[] = curEl.spans || [{ text: curContent }];
+              if (curHasSel) curSpans = spanDeleteRange(curSpans, cMin, cMax);
+              const newSpans = spanInsertText(curSpans, cMin, text);
+              s.updateElement(s.activePage, curEl.id, { spans: newSpans, content: getPlainText(newSpans) } as any);
+            } else {
+              const newContent = curContent.slice(0, cMin) + text + curContent.slice(cMax);
+              s.updateElement(s.activePage, curEl.id, { content: newContent } as any);
+            }
             s.setEditingCursorPos(cMin + text.length);
           });
           return;
@@ -669,37 +698,65 @@ export function Canvas() {
           if (canvas) {
             const ctx = canvas.getContext('2d');
             if (ctx) {
-              const weight = el.fontWeight === 'bold' ? 'bold' : '';
-              const style = el.fontStyle === 'italic' ? 'italic' : '';
-              ctx.font = `${style} ${weight} ${el.fontSize || 14}px ${el.font || 'sans-serif'}`.trim();
-              const lines = wrapText(ctx, content, el.width);
-              let charCount = 0;
-              let currentLine = 0;
-              let posInLine = 0;
-              for (let i = 0; i < lines.length; i++) {
-                if (pos <= charCount + lines[i].length) {
-                  currentLine = i;
-                  posInLine = pos - charCount;
-                  break;
+              if (isDocBody) {
+                const defaults: SpanDefaults = { font: el.font || 'sans-serif', fontSize: el.fontSize || 14, fontWeight: el.fontWeight || 'normal', fontStyle: el.fontStyle || 'normal', color: el.color || '#000', decoration: el.decoration || 'none' };
+                const lh = (el.fontSize || 14) * (el.lineHeight || 1.2);
+                const wrappedLines = wrapTextSpans(ctx, spans, el.width, defaults, lh, el.y);
+                let currentLine = 0;
+                let posInLine = 0;
+                for (let i = 0; i < wrappedLines.length; i++) {
+                  if (pos >= wrappedLines[i].startOffset && pos <= wrappedLines[i].endOffset) {
+                    currentLine = i;
+                    posInLine = pos - wrappedLines[i].startOffset;
+                    break;
+                  }
                 }
-                charCount += lines[i].length;
-                while (charCount < content.length && (content[charCount] === ' ' || content[charCount] === '\n')) charCount++;
-              }
-              const targetLine = e.key === 'ArrowUp' ? currentLine - 1 : currentLine + 1;
-              if (targetLine >= 0 && targetLine < lines.length) {
-                const targetPosInLine = Math.min(posInLine, lines[targetLine].length);
-                let newAbsPos = 0;
-                for (let i = 0; i < targetLine; i++) {
-                  newAbsPos += lines[i].length;
-                  while (newAbsPos < content.length && (content[newAbsPos] === ' ' || content[newAbsPos] === '\n')) newAbsPos++;
+                const targetLine = e.key === 'ArrowUp' ? currentLine - 1 : currentLine + 1;
+                if (targetLine >= 0 && targetLine < wrappedLines.length) {
+                  const tl = wrappedLines[targetLine];
+                  const lineLen = tl.endOffset - tl.startOffset;
+                  const newPos = Math.min(tl.startOffset + Math.min(posInLine, lineLen), getPlainText(spans).length);
+                  if (e.shiftKey) {
+                    const anchor = selStart !== null ? selStart : pos;
+                    store.setEditingSelection(anchor, newPos);
+                    store.setEditingCursorPos(newPos);
+                  } else {
+                    store.setEditingCursorPos(newPos);
+                  }
                 }
-                const newPos = Math.min(newAbsPos + targetPosInLine, content.length);
-                if (e.shiftKey) {
-                  const anchor = selStart !== null ? selStart : pos;
-                  store.setEditingSelection(anchor, newPos);
-                  store.setEditingCursorPos(newPos);
-                } else {
-                  store.setEditingCursorPos(newPos);
+              } else {
+                const weight = el.fontWeight === 'bold' ? 'bold' : '';
+                const style = el.fontStyle === 'italic' ? 'italic' : '';
+                ctx.font = `${style} ${weight} ${el.fontSize || 14}px ${el.font || 'sans-serif'}`.trim();
+                const lines = wrapText(ctx, content, el.width);
+                let charCount = 0;
+                let currentLine = 0;
+                let posInLine = 0;
+                for (let i = 0; i < lines.length; i++) {
+                  if (pos <= charCount + lines[i].length) {
+                    currentLine = i;
+                    posInLine = pos - charCount;
+                    break;
+                  }
+                  charCount += lines[i].length;
+                  while (charCount < content.length && (content[charCount] === ' ' || content[charCount] === '\n')) charCount++;
+                }
+                const targetLine = e.key === 'ArrowUp' ? currentLine - 1 : currentLine + 1;
+                if (targetLine >= 0 && targetLine < lines.length) {
+                  const targetPosInLine = Math.min(posInLine, lines[targetLine].length);
+                  let newAbsPos = 0;
+                  for (let i = 0; i < targetLine; i++) {
+                    newAbsPos += lines[i].length;
+                    while (newAbsPos < content.length && (content[newAbsPos] === ' ' || content[newAbsPos] === '\n')) newAbsPos++;
+                  }
+                  const newPos = Math.min(newAbsPos + targetPosInLine, content.length);
+                  if (e.shiftKey) {
+                    const anchor = selStart !== null ? selStart : pos;
+                    store.setEditingSelection(anchor, newPos);
+                    store.setEditingCursorPos(newPos);
+                  } else {
+                    store.setEditingCursorPos(newPos);
+                  }
                 }
               }
             }
@@ -708,24 +765,36 @@ export function Canvas() {
         }
         if (e.key === 'Backspace') {
           if (hasSelection) {
-            const d = deleteSelection()!;
-            store.updateElement(store.activePage, el.id, { content: d.newContent } as any);
-            store.setEditingCursorPos(d.newPos);
+            if (isDocBody) {
+              updateSpans(spanDeleteRange(spans, selMin, selMax));
+            } else {
+              updatePlainText(content.slice(0, selMin) + content.slice(selMax));
+            }
+            store.setEditingCursorPos(selMin);
           } else if (pos > 0) {
-            const newContent = content.slice(0, pos - 1) + content.slice(pos);
-            store.updateElement(store.activePage, el.id, { content: newContent } as any);
+            if (isDocBody) {
+              updateSpans(spanDeleteRange(spans, pos - 1, pos));
+            } else {
+              updatePlainText(content.slice(0, pos - 1) + content.slice(pos));
+            }
             store.setEditingCursorPos(pos - 1);
           }
           return;
         }
         if (e.key === 'Delete') {
           if (hasSelection) {
-            const d = deleteSelection()!;
-            store.updateElement(store.activePage, el.id, { content: d.newContent } as any);
-            store.setEditingCursorPos(d.newPos);
+            if (isDocBody) {
+              updateSpans(spanDeleteRange(spans, selMin, selMax));
+            } else {
+              updatePlainText(content.slice(0, selMin) + content.slice(selMax));
+            }
+            store.setEditingCursorPos(selMin);
           } else if (pos < content.length) {
-            const newContent = content.slice(0, pos) + content.slice(pos + 1);
-            store.updateElement(store.activePage, el.id, { content: newContent } as any);
+            if (isDocBody) {
+              updateSpans(spanDeleteRange(spans, pos, pos + 1));
+            } else {
+              updatePlainText(content.slice(0, pos) + content.slice(pos + 1));
+            }
           }
           return;
         }
@@ -776,33 +845,58 @@ export function Canvas() {
           return;
         }
         if (e.key === 'Enter') {
-          let newContent: string;
-          let newPos: number;
-          if (hasSelection) {
-            newContent = content.slice(0, selMin) + '\n' + content.slice(selMax);
-            newPos = selMin + 1;
+          if (isDocBody) {
+            let curSpans = spans;
+            let insertPos = pos;
+            if (hasSelection) {
+              curSpans = spanDeleteRange(curSpans, selMin, selMax);
+              insertPos = selMin;
+            }
+            const newSpans = spanInsertText(curSpans, insertPos, '\n', store.pendingStyle);
+            updateSpans(newSpans);
+            store.setEditingCursorPos(insertPos + 1);
           } else {
-            newContent = content.slice(0, pos) + '\n' + content.slice(pos);
-            newPos = pos + 1;
+            let newContent: string;
+            let newPos: number;
+            if (hasSelection) {
+              newContent = content.slice(0, selMin) + '\n' + content.slice(selMax);
+              newPos = selMin + 1;
+            } else {
+              newContent = content.slice(0, pos) + '\n' + content.slice(pos);
+              newPos = pos + 1;
+            }
+            updatePlainText(newContent);
+            store.setEditingCursorPos(newPos);
           }
-          store.updateElement(store.activePage, el.id, { content: newContent } as any);
-          store.setEditingCursorPos(newPos);
           return;
         }
 
         // Type character
         if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-          let newContent: string;
-          let newPos: number;
-          if (hasSelection) {
-            newContent = content.slice(0, selMin) + e.key + content.slice(selMax);
-            newPos = selMin + 1;
+          if (isDocBody) {
+            let curSpans = spans;
+            let insertPos = pos;
+            if (hasSelection) {
+              curSpans = spanDeleteRange(curSpans, selMin, selMax);
+              insertPos = selMin;
+            }
+            const newSpans = spanInsertText(curSpans, insertPos, e.key, store.pendingStyle);
+            updateSpans(newSpans);
+            store.setEditingCursorPos(insertPos + 1);
+            if (store.pendingStyle) store.setPendingStyle(null);
           } else {
-            newContent = content.slice(0, pos) + e.key + content.slice(pos);
-            newPos = pos + 1;
+            let newContent: string;
+            let newPos: number;
+            if (hasSelection) {
+              newContent = content.slice(0, selMin) + e.key + content.slice(selMax);
+              newPos = selMin + 1;
+            } else {
+              newContent = content.slice(0, pos) + e.key + content.slice(pos);
+              newPos = pos + 1;
+            }
+            updatePlainText(newContent);
+            store.setEditingCursorPos(newPos);
           }
-          store.updateElement(store.activePage, el.id, { content: newContent } as any);
-          store.setEditingCursorPos(newPos);
           return;
         }
         return;
@@ -1088,7 +1182,7 @@ export function Canvas() {
     ctx.font = '10px sans-serif';
     ctx.fillText(`${page.width} × ${page.height} pt  |  ${Math.round(zoom * 100)}%  |  ${page.elements.length} elements`, 10, h - 10);
 
-  }, [page, zoom, selectedIds, pan, isDragging, isResizing, drawingPoints, activeTool, currentColor, currentFillColor, brushSize, editingTextId, editingCursorPos, blinkVisible, shapeDrawing, activeShapeType, editingTableId, editingTableRow, editingTableCol, editingTableCursorPos, editorMode]);
+  }, [page, zoom, selectedIds, pan, isDragging, isResizing, drawingPoints, activeTool, currentColor, currentFillColor, brushSize, editingTextId, editingCursorPos, blinkVisible, shapeDrawing, activeShapeType, editingTableId, editingTableRow, editingTableCol, editingTableCursorPos, editorMode, editingSelectionStart, editingSelectionEnd]);
 
   // Handle window resize
   useEffect(() => {
@@ -1305,54 +1399,116 @@ function renderText(ctx: CanvasRenderingContext2D, el: any, editingTextId: strin
 }
 
 // ============================================================================
-// DOCUMENT BODY — full-page text like Word
+// DOCUMENT BODY — full-page text with rich text spans
 // ============================================================================
 function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyElement, editingTextId: string | null, cursorPos: number, blinkVisible: boolean) {
   const isEditing = editingTextId === el.id;
-  const editorMode = useDocumentStore.getState().editorMode;
+  const store = useDocumentStore.getState();
+  const editorMode = store.editorMode;
 
-  ctx.fillStyle = el.color || '#000';
-  const weight = el.fontWeight === 'bold' ? 'bold' : '';
-  const style = el.fontStyle === 'italic' ? 'italic' : '';
-  ctx.font = `${style} ${weight} ${el.fontSize || 14}px ${el.font || 'sans-serif'}`.trim();
   ctx.textBaseline = 'top';
 
-  const content = el.content || '';
-  const lines = wrapText(ctx, content, el.width);
+  const spans: TextSpan[] = el.spans || [{ text: el.content || '' }];
+  const plainText = getPlainText(spans);
+  const defaults: SpanDefaults = {
+    font: el.font || 'sans-serif',
+    fontSize: el.fontSize || 14,
+    fontWeight: el.fontWeight || 'normal',
+    fontStyle: el.fontStyle || 'normal',
+    color: el.color || '#000',
+    decoration: el.decoration || 'none',
+  };
   const lineHeight = (el.fontSize || 14) * (el.lineHeight || 1.2);
+  const wrappedLines = wrapTextSpans(ctx, spans, el.width, defaults, lineHeight, el.y);
 
   // In design mode, render as faint read-only text
   if (editorMode !== 'textEditor') {
     ctx.globalAlpha = 0.4;
   }
 
-  // NO cream background or purple border — clean page look
+  // Selection highlight
+  const selStart = store.editingSelectionStart;
+  const selEnd = store.editingSelectionEnd;
+  const hasSelection = isEditing && selStart !== null && selEnd !== null && selStart !== selEnd;
+  const selMin = hasSelection ? Math.min(selStart!, selEnd!) : 0;
+  const selMax = hasSelection ? Math.max(selStart!, selEnd!) : 0;
 
-  // Render text lines
-  ctx.fillStyle = el.color || '#000';
-  for (let i = 0; i < lines.length; i++) {
-    let x = el.x;
-    const lw = ctx.measureText(lines[i]).width;
-    if (el.align === 'center') x = el.x + (el.width - lw) / 2;
-    else if (el.align === 'right') x = el.x + el.width - lw;
-    ctx.fillText(lines[i], x, el.y + i * lineHeight);
+  if (hasSelection) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(124, 58, 237, 0.2)';
+    for (const line of wrappedLines) {
+      const lineStart = line.startOffset;
+      const lineEnd = line.endOffset;
+      if (lineEnd <= selMin || lineStart >= selMax) continue;
 
-    if (el.decoration === 'underline') {
-      ctx.strokeStyle = el.color || '#000';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(x, el.y + (i + 1) * lineHeight - 2);
-      ctx.lineTo(x + lw, el.y + (i + 1) * lineHeight - 2);
-      ctx.stroke();
+      const highlightStart = Math.max(selMin, lineStart);
+      const highlightEnd = Math.min(selMax, lineEnd);
+
+      // Compute x positions for highlight range
+      const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
+      let lineX = el.x;
+      if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+      else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
+
+      let startX = lineX;
+      let endX = lineX;
+      let charOff = lineStart;
+
+      for (const run of line.runs) {
+        const fontStr = `${run.fontStyle === 'italic' ? 'italic' : ''} ${run.fontWeight === 'bold' ? 'bold' : ''} ${run.fontSize}px ${run.font}`.trim();
+        ctx.font = fontStr;
+
+        const runEnd = charOff + run.text.length;
+        if (charOff >= highlightEnd) break;
+
+        if (runEnd > highlightStart) {
+          const localHlStart = Math.max(0, highlightStart - charOff);
+          const localHlEnd = Math.min(run.text.length, highlightEnd - charOff);
+          const beforeW = ctx.measureText(run.text.slice(0, localHlStart)).width;
+          const hlW = ctx.measureText(run.text.slice(localHlStart, localHlEnd)).width;
+
+          if (charOff <= highlightStart) startX = lineX + run.x + beforeW;
+          endX = lineX + run.x + beforeW + hlW;
+        }
+        charOff = runEnd;
+      }
+
+      ctx.fillRect(startX, line.y, endX - startX, lineHeight);
     }
-    if (el.decoration === 'strikethrough') {
-      ctx.strokeStyle = el.color || '#000';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      const midY = el.y + i * lineHeight + lineHeight * 0.4;
-      ctx.moveTo(x, midY);
-      ctx.lineTo(x + lw, midY);
-      ctx.stroke();
+    ctx.restore();
+  }
+
+  // Render text runs
+  for (const line of wrappedLines) {
+    const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
+    let lineX = el.x;
+    if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+    else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
+
+    for (const run of line.runs) {
+      const fontStr = `${run.fontStyle === 'italic' ? 'italic' : ''} ${run.fontWeight === 'bold' ? 'bold' : ''} ${run.fontSize}px ${run.font}`.trim();
+      ctx.font = fontStr;
+      ctx.fillStyle = run.color;
+      ctx.fillText(run.text, lineX + run.x, line.y);
+
+      // Decorations
+      if (run.decoration === 'underline') {
+        ctx.strokeStyle = run.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(lineX + run.x, line.y + lineHeight - 2);
+        ctx.lineTo(lineX + run.x + run.width, line.y + lineHeight - 2);
+        ctx.stroke();
+      }
+      if (run.decoration === 'strikethrough') {
+        ctx.strokeStyle = run.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        const midY = line.y + lineHeight * 0.4;
+        ctx.moveTo(lineX + run.x, midY);
+        ctx.lineTo(lineX + run.x + run.width, midY);
+        ctx.stroke();
+      }
     }
   }
 
@@ -1363,28 +1519,33 @@ function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyEleme
 
   // Blinking cursor
   if (isEditing && blinkVisible) {
-    let charCount = 0;
     let cursorX = el.x;
     let cursorY = el.y;
-    let found = false;
 
-    for (let i = 0; i < lines.length && !found; i++) {
-      const lineLen = lines[i].length;
-      if (cursorPos <= charCount + lineLen || i === lines.length - 1) {
-        const localPos = Math.max(0, cursorPos - charCount);
-        const textBefore = lines[i].slice(0, Math.min(localPos, lineLen));
-        const beforeWidth = ctx.measureText(textBefore).width;
+    for (const line of wrappedLines) {
+      if (cursorPos >= line.startOffset && cursorPos <= line.endOffset) {
+        const totalLineWidth = line.runs.reduce((sum, r) => sum + r.width, 0);
         let lineX = el.x;
-        const lw = ctx.measureText(lines[i]).width;
-        if (el.align === 'center') lineX = el.x + (el.width - lw) / 2;
-        else if (el.align === 'right') lineX = el.x + el.width - lw;
-        cursorX = lineX + beforeWidth;
-        cursorY = el.y + i * lineHeight;
-        found = true;
-      }
-      charCount += lineLen;
-      while (charCount < content.length && charCount < cursorPos && (content[charCount] === ' ' || content[charCount] === '\n')) {
-        charCount++;
+        if (el.align === 'center') lineX = el.x + (el.width - totalLineWidth) / 2;
+        else if (el.align === 'right') lineX = el.x + el.width - totalLineWidth;
+
+        let charOff = line.startOffset;
+        cursorX = lineX;
+        cursorY = line.y;
+
+        for (const run of line.runs) {
+          const fontStr = `${run.fontStyle === 'italic' ? 'italic' : ''} ${run.fontWeight === 'bold' ? 'bold' : ''} ${run.fontSize}px ${run.font}`.trim();
+          ctx.font = fontStr;
+          const runEnd = charOff + run.text.length;
+          if (cursorPos <= runEnd) {
+            const localPos = cursorPos - charOff;
+            cursorX = lineX + run.x + ctx.measureText(run.text.slice(0, localPos)).width;
+            break;
+          }
+          charOff = runEnd;
+          cursorX = lineX + run.x + run.width;
+        }
+        break;
       }
     }
 
@@ -1397,8 +1558,9 @@ function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyEleme
   }
 
   // Placeholder
-  if (isEditing && !content) {
+  if (isEditing && !plainText) {
     ctx.fillStyle = '#999';
+    ctx.font = `${el.fontSize || 14}px ${el.font || 'sans-serif'}`;
     ctx.fillText('Start typing...', el.x, el.y);
   }
 }
