@@ -64,6 +64,9 @@ function generatePdf(doc: any): Uint8Array {
       content += renderElementToPdf(el, h, w);
     }
 
+    // Header/Footer/Page Number overlays
+    content += renderPageOverlaysToPdf(page, h, w, pi + 1, pages.length);
+
     const contentObjId = addObj(`<< /Length ${content.length} >>\nstream\n${content}endstream`);
 
     const resources = `<< /Font << /F1 ${fontObjId} 0 R /F2 ${fontBoldObjId} 0 R /F3 ${fontItalicObjId} 0 R >> /ExtGState << /GS1 ${gsHalf} 0 R /GS2 ${gsFull} 0 R >> >>`;
@@ -250,6 +253,55 @@ function renderElementToPdf(el: any, pageH: number, pageW: number): string {
       break;
     }
 
+    case 'documentBody': {
+      const x = el.x || 72;
+      const fontSize = el.fontSize || 14;
+      const lineHeight = fontSize * (el.lineHeight || 1.2);
+      const color = hexToRgbF(el.color || '#000000');
+      const fontKey = el.fontWeight === 'bold' ? '/F2' : el.fontStyle === 'italic' ? '/F3' : '/F1';
+
+      // Render text content
+      const content = el.content || '';
+      if (content) {
+        const lines = content.split('\n');
+        let yPos = pageH - (el.y || 72) - fontSize;
+        s += 'q\n';
+        s += `${color.r} ${color.g} ${color.b} rg\n`;
+        s += 'BT\n';
+        s += `${fontKey} ${fontSize} Tf\n`;
+        s += `${lineHeight} TL\n`;
+        s += `${x} ${yPos} Td\n`;
+        for (let i = 0; i < lines.length; i++) {
+          const escaped = escPdfString(lines[i]);
+          if (i === 0) s += `(${escaped}) Tj\n`;
+          else s += `T*\n(${escaped}) Tj\n`;
+        }
+        s += 'ET\nQ\n';
+      }
+
+      // Border
+      const border = el.border;
+      if (border && border.style !== 'none' && border.width > 0) {
+        const bc = hexToRgbF(border.color || '#000000');
+        const bx = el.x || 0;
+        const by = pageH - (el.y || 0) - (el.height || 100);
+        const bw = el.width || 100;
+        const bh = el.height || 100;
+        s += 'q\n';
+        s += `${bc.r} ${bc.g} ${bc.b} RG\n`;
+        s += `${border.width} w\n`;
+        if (border.style === 'dashed') s += '[6 4] 0 d\n';
+        else if (border.style === 'dotted') s += '[2 2] 0 d\n';
+        if (border.radius > 0) {
+          s += roundedRectPdf(bx, by, bw, bh, Math.min(border.radius, bw / 2, bh / 2));
+        } else {
+          s += `${bx} ${by} ${bw} ${bh} re\n`;
+        }
+        s += 'S\nQ\n';
+      }
+      break;
+    }
+
     case 'drawing': {
       if (!el.paths) break;
       for (const path of el.paths) {
@@ -273,6 +325,69 @@ function renderElementToPdf(el: any, pageH: number, pageW: number): string {
       }
       break;
     }
+  }
+
+  return s;
+}
+
+function resolveVariables(text: string, pageNum: number, totalPages: number): string {
+  return text
+    .replace(/\{\{pageNumber\}\}/g, String(pageNum))
+    .replace(/\{\{totalPages\}\}/g, String(totalPages))
+    .replace(/\{\{date\}\}/g, new Date().toLocaleDateString())
+    .replace(/\{\{time\}\}/g, new Date().toLocaleTimeString());
+}
+
+function renderPageOverlaysToPdf(page: any, pageH: number, pageW: number, pageNum: number, totalPages: number): string {
+  let s = '';
+
+  // Header
+  if (page.header?.enabled && page.header.text) {
+    const h = page.header;
+    const text = resolveVariables(h.text, pageNum, totalPages);
+    const fontSize = h.fontSize || 10;
+    const color = hexToRgbF(h.color || '#666666');
+    const align = h.align || 'center';
+    let x = 40;
+    if (align === 'center') x = pageW / 2 - text.length * fontSize * 0.25;
+    else if (align === 'right') x = pageW - 40 - text.length * fontSize * 0.5;
+    const y = pageH - 20 - fontSize;
+    s += `q ${color.r} ${color.g} ${color.b} rg BT /F1 ${fontSize} Tf ${x} ${y} Td (${escPdfString(text)}) Tj ET Q\n`;
+  }
+
+  // Footer
+  if (page.footer?.enabled && page.footer.text) {
+    const f = page.footer;
+    const text = resolveVariables(f.text, pageNum, totalPages);
+    const fontSize = f.fontSize || 10;
+    const color = hexToRgbF(f.color || '#666666');
+    const align = f.align || 'center';
+    let x = 40;
+    if (align === 'center') x = pageW / 2 - text.length * fontSize * 0.25;
+    else if (align === 'right') x = pageW - 40 - text.length * fontSize * 0.5;
+    const y = 20;
+    s += `q ${color.r} ${color.g} ${color.b} rg BT /F1 ${fontSize} Tf ${x} ${y} Td (${escPdfString(text)}) Tj ET Q\n`;
+  }
+
+  // Page number
+  if (page.pageNumber?.enabled) {
+    const pn = page.pageNumber;
+    const fontSize = pn.fontSize || 10;
+    const color = hexToRgbF(pn.color || '#666666');
+
+    let text = String(pageNum);
+    if (pn.format === 'Page 1') text = `Page ${pageNum}`;
+    else if (pn.format === '1 of N') text = `${pageNum} of ${totalPages}`;
+    else if (pn.format === 'Page 1 of N') text = `Page ${pageNum} of ${totalPages}`;
+
+    const pos = pn.position || 'bottom-center';
+    const isTop = pos.startsWith('top');
+    const y = isTop ? pageH - 20 - fontSize : 20;
+    let x = pageW / 2 - text.length * fontSize * 0.25;
+    if (pos.endsWith('left')) x = 40;
+    else if (pos.endsWith('right')) x = pageW - 40 - text.length * fontSize * 0.5;
+
+    s += `q ${color.r} ${color.g} ${color.b} rg BT /F1 ${fontSize} Tf ${x} ${y} Td (${escPdfString(text)}) Tj ET Q\n`;
   }
 
   return s;

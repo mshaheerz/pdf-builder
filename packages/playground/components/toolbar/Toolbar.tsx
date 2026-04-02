@@ -2,8 +2,9 @@
 
 import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextSpan } from '@/store/document-store';
 import { useCallback, useState } from 'react';
-import { exportPdfWasm } from '@/lib/pdf-export';
+import { exportPdfWasm, exportPdfClient } from '@/lib/pdf-export';
 import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle, getParagraphRange, insertText as spanInsertText } from '@/store/span-utils';
+import { resolveVariables } from '@/store/variable-utils';
 import {
   MousePointer2, Type, Square, Table2, ImageIcon, Pencil, Highlighter, Eraser, Hand,
   Bold, Italic, Underline, Strikethrough,
@@ -94,14 +95,54 @@ function exportToHtml(): string {
   const { pages } = state;
   let html = `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>Document Export</title>\n<style>\n  body { margin: 0; font-family: sans-serif; background: #f0f0f0; }\n  .page { background: white; margin: 20px auto; box-shadow: 0 2px 8px rgba(0,0,0,0.15); position: relative; overflow: hidden; }\n</style>\n</head>\n<body>\n`;
 
-  for (const page of pages) {
+  for (let pi = 0; pi < pages.length; pi++) {
+    const page = pages[pi];
+    const varCtx = { pageNumber: pi + 1, totalPages: pages.length };
     html += `<div class="page" style="width:${page.width}px;height:${page.height}px;background:${page.background}">\n`;
+
+    // Header
+    if (page.header?.enabled && page.header.text) {
+      const h = page.header;
+      const text = resolveVariables(h.text, varCtx).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      html += `  <div style="position:absolute;top:10px;left:40px;right:40px;font-size:${h.fontSize || 10}px;color:${h.color || '#666'};text-align:${h.align || 'center'};font-family:${h.font || 'Helvetica'},sans-serif">${text}</div>\n`;
+    }
+
+    // Footer
+    if (page.footer?.enabled && page.footer.text) {
+      const f = page.footer;
+      const text = resolveVariables(f.text, varCtx).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      html += `  <div style="position:absolute;bottom:10px;left:40px;right:40px;font-size:${f.fontSize || 10}px;color:${f.color || '#666'};text-align:${f.align || 'center'};font-family:${f.font || 'Helvetica'},sans-serif">${text}</div>\n`;
+    }
+
+    // Page number
+    if (page.pageNumber?.enabled) {
+      const pn = page.pageNumber;
+      let text = String(pi + 1);
+      if (pn.format === 'Page 1') text = `Page ${pi + 1}`;
+      else if (pn.format === '1 of N') text = `${pi + 1} of ${pages.length}`;
+      else if (pn.format === 'Page 1 of N') text = `Page ${pi + 1} of ${pages.length}`;
+      const pos = pn.position || 'bottom-center';
+      const isTop = pos.startsWith('top');
+      const vStyle = isTop ? 'top:10px' : 'bottom:10px';
+      let hStyle = 'left:40px;right:40px;text-align:center';
+      if (pos.endsWith('left')) hStyle = 'left:40px;text-align:left';
+      else if (pos.endsWith('right')) hStyle = 'right:40px;text-align:right';
+      html += `  <div style="position:absolute;${vStyle};${hStyle};font-size:${pn.fontSize || 10}px;color:${pn.color || '#666'};font-family:${pn.font || 'Helvetica'},sans-serif">${text}</div>\n`;
+    }
+
     for (const el of page.elements) {
       if (el.type === 'documentBody') {
         const body = el as any;
         const spans: TextSpan[] = body.spans || [{ text: body.content || '' }];
         const defaults = { font: body.font, fontSize: body.fontSize, fontWeight: body.fontWeight, fontStyle: body.fontStyle, color: body.color, decoration: body.decoration };
-        html += `  <div style="position:absolute;left:${el.x}px;top:${el.y}px;width:${el.width}px;font-family:${body.font};font-size:${body.fontSize}px;color:${body.color};line-height:${body.lineHeight};text-align:${body.align};white-space:pre-wrap">\n`;
+        // Border styles
+        const border = body.border;
+        let borderStyle = '';
+        if (border && border.style !== 'none' && border.width > 0) {
+          borderStyle = `;border:${border.width}px ${border.style} ${border.color || '#000'}`;
+          if (border.radius > 0) borderStyle += `;border-radius:${border.radius}px`;
+        }
+        html += `  <div style="position:absolute;left:${el.x}px;top:${el.y}px;width:${el.width}px;font-family:${body.font};font-size:${body.fontSize}px;color:${body.color};line-height:${body.lineHeight};text-align:${body.align};white-space:pre-wrap${borderStyle}">\n`;
         for (const span of spans) {
           const s = resolveSpanStyle(span, defaults);
           const styles: string[] = [];
@@ -219,6 +260,22 @@ export function Toolbar() {
     const json = exportToJson();
     try {
       const pdfBytes = await exportPdfWasm(json);
+      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'document.pdf'; a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('PDF export failed. Check console for details.');
+      console.error(err);
+    }
+  }, [exportToJson]);
+
+  const handleExportPdfClient = useCallback(() => {
+    setShowExportMenu(false);
+    const json = exportToJson();
+    try {
+      const pdfBytes = exportPdfClient(json);
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -512,7 +569,7 @@ export function Toolbar() {
 
           {/* Export */}
           <ExportMenu showExportMenu={showExportMenu} setShowExportMenu={setShowExportMenu}
-            handleExportPdfWasm={handleExportPdfWasm} handleExportPdfServer={handleExportPdfServer}
+            handleExportPdfWasm={handleExportPdfWasm} handleExportPdfServer={handleExportPdfServer} handleExportPdfClient={handleExportPdfClient}
             handleExportJson={handleExportJson} handleExportHtml={handleExportHtml} handleLoadJson={handleLoadJson} />
         </div>
       </div>
@@ -669,7 +726,7 @@ export function Toolbar() {
 
       {/* Export */}
       <ExportMenu showExportMenu={showExportMenu} setShowExportMenu={setShowExportMenu}
-        handleExportPdfWasm={handleExportPdfWasm} handleExportPdfServer={handleExportPdfServer}
+        handleExportPdfWasm={handleExportPdfWasm} handleExportPdfServer={handleExportPdfServer} handleExportPdfClient={handleExportPdfClient}
         handleExportJson={handleExportJson} handleExportHtml={handleExportHtml} handleLoadJson={handleLoadJson} />
     </div>
   );
@@ -678,9 +735,9 @@ export function Toolbar() {
 // ============================================================================
 // Export Menu (shared between modes)
 // ============================================================================
-function ExportMenu({ showExportMenu, setShowExportMenu, handleExportPdfWasm, handleExportPdfServer, handleExportJson, handleExportHtml, handleLoadJson }: {
+function ExportMenu({ showExportMenu, setShowExportMenu, handleExportPdfWasm, handleExportPdfServer, handleExportPdfClient, handleExportJson, handleExportHtml, handleLoadJson }: {
   showExportMenu: boolean; setShowExportMenu: (v: boolean) => void;
-  handleExportPdfWasm: () => void; handleExportPdfServer: () => void;
+  handleExportPdfWasm: () => void; handleExportPdfServer: () => void; handleExportPdfClient: () => void;
   handleExportJson: () => void; handleExportHtml: () => void; handleLoadJson: () => void;
 }) {
   return (
@@ -693,6 +750,9 @@ function ExportMenu({ showExportMenu, setShowExportMenu, handleExportPdfWasm, ha
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
           <div className="absolute right-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-56">
+            <button onClick={handleExportPdfClient} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
+              <FileText size={13} className="text-green-400" /> Export as PDF (Client)
+            </button>
             <button onClick={handleExportPdfWasm} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
               <FileText size={13} className="text-red-400" /> Export as PDF (WASM)
             </button>
