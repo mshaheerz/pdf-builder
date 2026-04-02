@@ -1,13 +1,13 @@
 'use client';
 
 import React from 'react';
-import { useDocumentStore, type Element } from '@/store/document-store';
+import { useDocumentStore, type Element, type HeaderFooterConfig, type PageNumberConfig } from '@/store/document-store';
 import {
   Trash2, Copy, Lock, Unlock, Eye, EyeOff, RefreshCw, Link2,
 } from 'lucide-react';
 
 export function RightPanel() {
-  const { pages, activePage, selectedIds, updateElement, editorMode } = useDocumentStore();
+  const { pages, activePage, selectedIds, updateElement, editorMode, updatePageConfig } = useDocumentStore();
   const page = pages[activePage];
   const isTextEditorMode = editorMode === 'textEditor';
   const selectedEl = isTextEditorMode ? null : page?.elements.find((el) => selectedIds.includes(el.id));
@@ -75,6 +75,10 @@ export function RightPanel() {
                   </button>
                 ))}
               </div>
+
+              <PageNumberSection page={page} activePage={activePage} updatePageConfig={updatePageConfig} />
+              <HeaderFooterSection label="Header" config={page.header} activePage={activePage} updatePageConfig={updatePageConfig} field="header" />
+              <HeaderFooterSection label="Footer" config={page.footer} activePage={activePage} updatePageConfig={updatePageConfig} field="footer" />
             </>
           )}
         </div>
@@ -328,6 +332,84 @@ function TableProperties({ el, update }: { el: any; update: (u: any) => void }) 
           </div>
         ))}
       </div>
+    </>
+  );
+}
+
+// ============================================================================
+// Page Number, Header/Footer config sections
+// ============================================================================
+
+function PageNumberSection({ page, activePage, updatePageConfig }: { page: any; activePage: number; updatePageConfig: (i: number, u: any) => void }) {
+  const pn: PageNumberConfig = page.pageNumber || { enabled: false, position: 'bottom-center', format: '1' };
+  const setPn = (updates: Partial<PageNumberConfig>) => updatePageConfig(activePage, { pageNumber: { ...pn, ...updates } });
+  return (
+    <>
+      <SectionTitle>Page Number</SectionTitle>
+      <PropRow label="Enabled">
+        <input type="checkbox" checked={pn.enabled} onChange={(e) => setPn({ enabled: e.target.checked })} />
+      </PropRow>
+      {pn.enabled && (
+        <>
+          <PropRow label="Position">
+            <select value={pn.position || 'bottom-center'} onChange={(e) => setPn({ position: e.target.value as any })}
+              className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1">
+              {['top-left', 'top-center', 'top-right', 'bottom-left', 'bottom-center', 'bottom-right'].map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </PropRow>
+          <PropRow label="Format">
+            <select value={pn.format || '1'} onChange={(e) => setPn({ format: e.target.value as any })}
+              className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1">
+              {['1', 'Page 1', '1 of N', 'Page 1 of N'].map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </select>
+          </PropRow>
+          <PropRow label="Size">
+            <NumberInput value={pn.fontSize || 10} onChange={(v) => setPn({ fontSize: v })} />
+          </PropRow>
+          <PropRow label="Color">
+            <ColorInput value={pn.color || '#666666'} onChange={(v) => setPn({ color: v })} />
+          </PropRow>
+        </>
+      )}
+    </>
+  );
+}
+
+function HeaderFooterSection({ label, config, activePage, updatePageConfig, field }: {
+  label: string; config?: HeaderFooterConfig; activePage: number;
+  updatePageConfig: (i: number, u: any) => void; field: 'header' | 'footer';
+}) {
+  const hf: HeaderFooterConfig = config || { enabled: false, text: '' };
+  const setHf = (updates: Partial<HeaderFooterConfig>) => updatePageConfig(activePage, { [field]: { ...hf, ...updates } });
+  return (
+    <>
+      <SectionTitle>{label}</SectionTitle>
+      <PropRow label="Enabled">
+        <input type="checkbox" checked={hf.enabled} onChange={(e) => setHf({ enabled: e.target.checked })} />
+      </PropRow>
+      {hf.enabled && (
+        <>
+          <PropRow label="Text">
+            <input type="text" value={hf.text || ''} onChange={(e) => setHf({ text: e.target.value })}
+              placeholder="Use {{pageNumber}} etc."
+              className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1 focus:border-editor-accent outline-none" />
+          </PropRow>
+          <PropRow label="Align">
+            <ButtonGroup options={[{ value: 'left', label: 'L' }, { value: 'center', label: 'C' }, { value: 'right', label: 'R' }]}
+              value={hf.align || 'center'} onChange={(v) => setHf({ align: v as any })} />
+          </PropRow>
+          <PropRow label="Size">
+            <NumberInput value={hf.fontSize || 10} onChange={(v) => setHf({ fontSize: v })} />
+          </PropRow>
+          <PropRow label="Color">
+            <ColorInput value={hf.color || '#666666'} onChange={(v) => setHf({ color: v })} />
+          </PropRow>
+        </>
+      )}
     </>
   );
 }

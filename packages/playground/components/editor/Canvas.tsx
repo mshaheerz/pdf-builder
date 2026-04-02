@@ -1,9 +1,10 @@
 'use client';
 
 import { useRef, useEffect, useCallback, useState, useMemo } from 'react';
-import { useDocumentStore, generateId, type Element, type ShapeElement, type EditorMode, type DocumentBodyElement, type TextSpan } from '@/store/document-store';
+import { useDocumentStore, generateId, type Element, type ShapeElement, type EditorMode, type DocumentBodyElement, type TextSpan, type Page } from '@/store/document-store';
 import { wrapText } from '@/store/table-utils';
 import { getPlainText, insertText as spanInsertText, deleteRange as spanDeleteRange, wrapTextSpans, type SpanDefaults, type WrappedLine } from '@/store/span-utils';
+import { resolveVariables } from '@/store/variable-utils';
 
 // ============================================================================
 // Image cache - prevents flicker
@@ -1080,6 +1081,9 @@ export function Canvas() {
     ctx.lineWidth = 0.5 / zoom;
     ctx.strokeRect(0, 0, page.width, page.height);
 
+    // Render header/footer/page number
+    renderPageOverlays(ctx, page, activePage + 1, pages.length);
+
     // Clip to page for rendering
     ctx.save();
     ctx.beginPath();
@@ -1284,6 +1288,73 @@ function pointInTriangle(px: number, py: number, x1: number, y1: number, x2: num
 }
 function sign(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
   return (px - x2) * (y1 - y2) - (x1 - x2) * (py - y2);
+}
+
+// ============================================================================
+// PAGE OVERLAYS — header, footer, page numbers
+// ============================================================================
+function renderPageOverlays(ctx: CanvasRenderingContext2D, page: Page, pageNum: number, totalPages: number) {
+  const varCtx = { pageNumber: pageNum, totalPages };
+
+  // Header
+  if (page.header?.enabled && page.header.text) {
+    ctx.save();
+    const h = page.header;
+    ctx.font = `${h.fontSize || 10}px ${h.font || 'Helvetica'}`;
+    ctx.fillStyle = h.color || '#666';
+    ctx.textBaseline = 'top';
+    const text = resolveVariables(h.text, varCtx);
+    const align = h.align || 'center';
+    let x = 40;
+    if (align === 'center') { ctx.textAlign = 'center'; x = page.width / 2; }
+    else if (align === 'right') { ctx.textAlign = 'right'; x = page.width - 40; }
+    else { ctx.textAlign = 'left'; }
+    ctx.fillText(text, x, 20);
+    ctx.restore();
+  }
+
+  // Footer
+  if (page.footer?.enabled && page.footer.text) {
+    ctx.save();
+    const f = page.footer;
+    ctx.font = `${f.fontSize || 10}px ${f.font || 'Helvetica'}`;
+    ctx.fillStyle = f.color || '#666';
+    ctx.textBaseline = 'bottom';
+    const text = resolveVariables(f.text, varCtx);
+    const align = f.align || 'center';
+    let x = 40;
+    if (align === 'center') { ctx.textAlign = 'center'; x = page.width / 2; }
+    else if (align === 'right') { ctx.textAlign = 'right'; x = page.width - 40; }
+    else { ctx.textAlign = 'left'; }
+    ctx.fillText(text, x, page.height - 20);
+    ctx.restore();
+  }
+
+  // Page number
+  if (page.pageNumber?.enabled) {
+    ctx.save();
+    const pn = page.pageNumber;
+    ctx.font = `${pn.fontSize || 10}px ${pn.font || 'Helvetica'}`;
+    ctx.fillStyle = pn.color || '#666';
+
+    let text = String(pageNum);
+    if (pn.format === 'Page 1') text = `Page ${pageNum}`;
+    else if (pn.format === '1 of N') text = `${pageNum} of ${totalPages}`;
+    else if (pn.format === 'Page 1 of N') text = `Page ${pageNum} of ${totalPages}`;
+
+    const pos = pn.position || 'bottom-center';
+    const isTop = pos.startsWith('top');
+    const y = isTop ? 20 : page.height - 20;
+    ctx.textBaseline = isTop ? 'top' : 'bottom';
+
+    let x = page.width / 2;
+    ctx.textAlign = 'center';
+    if (pos.endsWith('left')) { x = 40; ctx.textAlign = 'left'; }
+    else if (pos.endsWith('right')) { x = page.width - 40; ctx.textAlign = 'right'; }
+
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  }
 }
 
 // ============================================================================
@@ -1569,6 +1640,27 @@ function renderDocumentBody(ctx: CanvasRenderingContext2D, el: DocumentBodyEleme
     ctx.fillStyle = '#999';
     ctx.font = `${el.fontSize || 14}px ${el.font || 'sans-serif'}`;
     ctx.fillText('Start typing...', el.x, el.y);
+  }
+
+  // Border
+  const border = (el as any).border;
+  if (border && border.style !== 'none' && border.width > 0) {
+    ctx.save();
+    ctx.strokeStyle = border.color || '#000';
+    ctx.lineWidth = border.width;
+    if (border.style === 'dashed') ctx.setLineDash([6, 4]);
+    else if (border.style === 'dotted') ctx.setLineDash([2, 2]);
+    else ctx.setLineDash([]);
+    const r = border.radius || 0;
+    if (r > 0) {
+      ctx.beginPath();
+      ctx.roundRect(el.x, el.y, el.width, el.height, r);
+      ctx.stroke();
+    } else {
+      ctx.strokeRect(el.x, el.y, el.width, el.height);
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
   }
 }
 

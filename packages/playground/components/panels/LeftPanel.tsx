@@ -4,6 +4,7 @@ import { useDocumentStore } from '@/store/document-store';
 import {
   Type, Square, Image, Table2, Pencil, FileText,
   Eye, EyeOff, Lock, Unlock,
+  ChevronUp, ChevronDown,
 } from 'lucide-react';
 
 const typeIcons: Record<string, any> = {
@@ -16,7 +17,7 @@ const typeIcons: Record<string, any> = {
 };
 
 export function LeftPanel() {
-  const { pages, activePage, setActivePage, addPage, removePage, selectedIds, setSelectedIds, editingTextId, editorMode } = useDocumentStore();
+  const { pages, activePage, setActivePage, addPage, removePage, selectedIds, setSelectedIds, editingTextId, editorMode, movePage } = useDocumentStore();
   const page = pages[activePage];
 
   // Filter out documentBody in text editor mode (it's the editing surface, not a layer)
@@ -45,8 +46,20 @@ export function LeftPanel() {
               }`}
             >
               <span className="font-medium">Page {i + 1}</span>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center gap-0.5">
                 <span className="text-[10px] opacity-50">{p.elements.length}</span>
+                {i > 0 && (
+                  <button onClick={(e) => { e.stopPropagation(); movePage(i, i - 1); }}
+                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-200" title="Move up">
+                    <ChevronUp size={12} />
+                  </button>
+                )}
+                {i < pages.length - 1 && (
+                  <button onClick={(e) => { e.stopPropagation(); movePage(i, i + 1); }}
+                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-gray-200" title="Move down">
+                    <ChevronDown size={12} />
+                  </button>
+                )}
                 {pages.length > 1 && (
                   <button
                     onClick={(e) => { e.stopPropagation(); removePage(i); }}

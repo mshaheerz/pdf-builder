@@ -3,7 +3,7 @@
 import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextSpan } from '@/store/document-store';
 import { useCallback, useState } from 'react';
 import { exportPdfWasm } from '@/lib/pdf-export';
-import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle, getParagraphRange } from '@/store/span-utils';
+import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle, getParagraphRange, insertText as spanInsertText } from '@/store/span-utils';
 import {
   MousePointer2, Type, Square, Table2, ImageIcon, Pencil, Highlighter, Eraser, Hand,
   Bold, Italic, Underline, Strikethrough,
@@ -12,6 +12,7 @@ import {
   FileDown, FileUp, FileJson, FileText, FileCode2,
   Upload, Link2,
   ChevronDown,
+  Braces,
 } from 'lucide-react';
 
 /** Prevent toolbar interactions from stealing focus away from canvas */
@@ -155,6 +156,7 @@ export function Toolbar() {
   const [showImageMenu, setShowImageMenu] = useState(false);
   const [imageUrlValue, setImageUrlValue] = useState('');
   const [showImageUrlInput, setShowImageUrlInput] = useState(false);
+  const [showVariableMenu, setShowVariableMenu] = useState(false);
 
   const isTextEditorMode = editorMode === 'textEditor';
 
@@ -435,6 +437,58 @@ export function Toolbar() {
               className="bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-1 py-0.5 w-10" title="Right margin" />
             <input type="number" value={selectedTextEl?.marginTop ?? 72} onChange={(e) => { updateSelectedText({ marginTop: Number(e.target.value), y: Number(e.target.value) }); blurAfterChange(); }}
               className="bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-1 py-0.5 w-10" title="Top margin" />
+          </div>
+
+          {/* Border */}
+          <div className="w-px h-6 bg-editor-border mx-1" />
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-400">Border</span>
+            <input type="number" min="0" max="10" value={(selectedTextEl as any)?.border?.width ?? 0}
+              onChange={(e) => { const w = Number(e.target.value); updateSelectedText({ border: { ...((selectedTextEl as any)?.border || { color: '#000000', style: 'solid', radius: 0 }), width: w } }); blurAfterChange(); }}
+              className="bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-1 py-0.5 w-10" title="Border width" />
+            <input type="color" value={(selectedTextEl as any)?.border?.color || '#000000'}
+              onChange={(e) => { updateSelectedText({ border: { ...((selectedTextEl as any)?.border || { width: 1, style: 'solid', radius: 0 }), color: e.target.value } }); blurAfterChange(); }}
+              className="w-5 h-5 rounded cursor-pointer border border-editor-border" title="Border color" />
+            <select value={(selectedTextEl as any)?.border?.style || 'none'}
+              onChange={(e) => { updateSelectedText({ border: { ...((selectedTextEl as any)?.border || { width: 1, color: '#000000', radius: 0 }), style: e.target.value } }); blurAfterChange(); }}
+              className="bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-0.5 py-0.5 w-14">
+              <option value="none">None</option>
+              <option value="solid">Solid</option>
+              <option value="dashed">Dashed</option>
+              <option value="dotted">Dotted</option>
+            </select>
+            <input type="number" min="0" max="20" value={(selectedTextEl as any)?.border?.radius ?? 0}
+              onChange={(e) => { updateSelectedText({ border: { ...((selectedTextEl as any)?.border || { width: 1, color: '#000000', style: 'solid' }), radius: Number(e.target.value) } }); blurAfterChange(); }}
+              className="bg-editor-bg text-editor-text text-[10px] border border-editor-border rounded px-1 py-0.5 w-10" title="Border radius" />
+          </div>
+
+          {/* Insert Variable */}
+          <div className="w-px h-6 bg-editor-border mx-1" />
+          <div className="relative">
+            <button onClick={() => setShowVariableMenu(!showVariableMenu)} className={`${iconBtn} ${iconBtnNormal}`} title="Insert Variable">
+              <Braces size={14} />
+            </button>
+            {showVariableMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowVariableMenu(false)} />
+                <div className="absolute left-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-40">
+                  {['{{pageNumber}}', '{{totalPages}}', '{{date}}', '{{time}}'].map((v) => (
+                    <button key={v} onClick={() => {
+                      if (bodyEl) {
+                        const body = bodyEl as any;
+                        const spans = body.spans || [{ text: body.content || '' }];
+                        const store = useDocumentStore.getState();
+                        const pos = store.editingCursorPos;
+                        const newSpans = spanInsertText(spans, pos, v, store.pendingStyle);
+                        updateElement(activePage, body.id, { spans: newSpans, content: getPlainText(newSpans) } as any);
+                        useDocumentStore.getState().setEditingCursorPos(pos + v.length);
+                      }
+                      setShowVariableMenu(false);
+                    }} className="w-full text-left px-3 py-1.5 text-xs hover:bg-editor-hover font-mono">{v}</button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
 
           <div className="w-px h-6 bg-editor-border mx-1" />

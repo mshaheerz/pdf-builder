@@ -52,6 +52,9 @@ export interface Page {
   height: number;
   background: string;
   elements: Element[];
+  header?: HeaderFooterConfig;
+  footer?: HeaderFooterConfig;
+  pageNumber?: PageNumberConfig;
 }
 
 // ============================================================================
@@ -182,6 +185,33 @@ export interface DocumentBodyElement extends BaseElement {
   marginLeft: number;
   marginRight: number;
   marginTop: number;
+  border?: {
+    width: number;
+    color: string;
+    style: 'solid' | 'dashed' | 'dotted' | 'none';
+    radius: number;
+  };
+}
+
+export type PageNumberPosition = 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-center' | 'top-right';
+export type PageNumberFormat = '1' | 'Page 1' | '1 of N' | 'Page 1 of N';
+
+export interface HeaderFooterConfig {
+  enabled: boolean;
+  text: string;
+  font?: string;
+  fontSize?: number;
+  color?: string;
+  align?: TextAlign;
+}
+
+export interface PageNumberConfig {
+  enabled: boolean;
+  position: PageNumberPosition;
+  format: PageNumberFormat;
+  font?: string;
+  fontSize?: number;
+  color?: string;
 }
 
 export type Element = TextElement | ShapeElement | ImageElement | TableElement | DrawingElement | DocumentBodyElement | BaseElement;

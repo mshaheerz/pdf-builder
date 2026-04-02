@@ -6,6 +6,7 @@ import type {
   Fill, BorderStyle, BaseElement, TextElement, ShapeElement,
   ImageElement, TableElement, DrawingElement, DocumentBodyElement,
   Element, Page, TextSpan,
+  HeaderFooterConfig, PageNumberConfig, PageNumberPosition, PageNumberFormat,
 } from '@pdf-builder/sdk';
 
 export type {
@@ -13,6 +14,7 @@ export type {
   Fill, BorderStyle, BaseElement, TextElement, ShapeElement,
   ImageElement, TableElement, DrawingElement, DocumentBodyElement,
   Element, Page, TextSpan,
+  HeaderFooterConfig, PageNumberConfig, PageNumberPosition, PageNumberFormat,
 };
 
 // ============================================================================
@@ -87,6 +89,8 @@ interface DocumentState {
   loadFromJson: (json: string) => void;
   getNextYPosition: (pageIndex: number) => number;
   ensureDocumentBody: (pageIndex: number) => string;
+  movePage: (from: number, to: number) => void;
+  updatePageConfig: (pageIndex: number, updates: Partial<Page>) => void;
 }
 
 export { generateId };
@@ -327,6 +331,24 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     set({ pages });
     return newId;
   },
+
+  movePage: (from: number, to: number) => set((s) => {
+    if (from < 0 || from >= s.pages.length || to < 0 || to >= s.pages.length || from === to) return s;
+    const pages = [...s.pages];
+    const [moved] = pages.splice(from, 1);
+    pages.splice(to, 0, moved);
+    let activePage = s.activePage;
+    if (s.activePage === from) activePage = to;
+    else if (from < s.activePage && to >= s.activePage) activePage--;
+    else if (from > s.activePage && to <= s.activePage) activePage++;
+    return { pages, activePage };
+  }),
+
+  updatePageConfig: (pageIndex: number, updates: Partial<Page>) => set((s) => {
+    const pages = [...s.pages];
+    pages[pageIndex] = { ...pages[pageIndex], ...updates };
+    return { pages };
+  }),
 
   // Find the next available Y position (below all existing elements)
   getNextYPosition: (pageIndex: number) => {
