@@ -11,7 +11,37 @@ async function ensureWasm() {
 
 export async function exportPdfWasm(documentJson: string): Promise<Uint8Array> {
   await ensureWasm();
-  return build_pdf_from_json(documentJson);
+  const resolved = resolveVariablesInJson(documentJson);
+  return build_pdf_from_json(resolved);
+}
+
+function getPlainTextFromSpans(spans: any[]): string {
+  if (!Array.isArray(spans)) return '';
+  return spans.map((s: any) => (typeof s.text === 'string' ? s.text : '')).join('');
+}
+
+function resolveVariablesInJson(json: string): string {
+  const doc = JSON.parse(json);
+  if (!doc.pages) return json;
+  const totalPages = doc.pages.length;
+  for (let pi = 0; pi < doc.pages.length; pi++) {
+    const page = doc.pages[pi];
+    const pageNum = pi + 1;
+    if (page.header?.text) page.header.text = resolveVariables(page.header.text, pageNum, totalPages);
+    if (page.footer?.text) page.footer.text = resolveVariables(page.footer.text, pageNum, totalPages);
+    if (page.elements) {
+      for (const el of page.elements) {
+        // Ensure content is populated from spans for documentBody elements
+        if (el.type === 'documentBody' && el.spans && (!el.content || el.content === '')) {
+          el.content = getPlainTextFromSpans(el.spans);
+        }
+        if (el.content && typeof el.content === 'string') {
+          el.content = resolveVariables(el.content, pageNum, totalPages);
+        }
+      }
+    }
+  }
+  return JSON.stringify(doc);
 }
 
 // ============================================================================
@@ -64,7 +94,7 @@ export function exportPdfClient(documentJson: string): Uint8Array {
     }
 
     for (const el of (page.elements || [])) {
-      content += renderElementToPdf(el, h, w, fontBoldObjId, fontItalicObjId);
+      content += renderElementToPdf(el, h, w, pi + 1, pages.length, fontBoldObjId, fontItalicObjId);
     }
 
     content += renderPageOverlaysToPdf(page, h, w, pi + 1, pages.length);
@@ -109,7 +139,7 @@ export function exportPdfClient(documentJson: string): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
-function renderElementToPdf(el: any, pageH: number, pageW: number, _fontBold?: number, _fontItalic?: number): string {
+function renderElementToPdf(el: any, pageH: number, pageW: number, pageNum: number, totalPages: number, _fontBold?: number, _fontItalic?: number): string {
   let s = '';
 
   switch (el.type) {
@@ -127,7 +157,7 @@ function renderElementToPdf(el: any, pageH: number, pageW: number, _fontBold?: n
       s += `${fontSize * (el.lineHeight || 1.2)} TL\n`;
       s += `${x} ${y} Td\n`;
 
-      const lines = (el.content || '').split('\n');
+      const lines = resolveVariables(el.content || '', pageNum, totalPages).split('\n');
       for (let i = 0; i < lines.length; i++) {
         const escaped = escPdfString(lines[i]);
         if (i === 0) s += `(${escaped}) Tj\n`;
@@ -144,7 +174,7 @@ function renderElementToPdf(el: any, pageH: number, pageW: number, _fontBold?: n
       const color = hexToRgbF(el.color || '#000000');
       const fontKey = el.fontWeight === 'bold' ? '/F2' : el.fontStyle === 'italic' ? '/F3' : '/F1';
 
-      const content = el.content || '';
+      const content = resolveVariables(el.content || '', pageNum, totalPages);
       if (content) {
         const lines = content.split('\n');
         let yPos = pageH - (el.y || 72) - fontSize;

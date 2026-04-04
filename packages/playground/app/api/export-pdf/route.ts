@@ -61,7 +61,7 @@ function generatePdf(doc: any): Uint8Array {
     }
 
     for (const el of (page.elements || [])) {
-      content += renderElementToPdf(el, h, w);
+      content += renderElementToPdf(el, h, w, pi + 1, pages.length);
     }
 
     // Header/Footer/Page Number overlays
@@ -114,7 +114,7 @@ function generatePdf(doc: any): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
-function renderElementToPdf(el: any, pageH: number, pageW: number): string {
+function renderElementToPdf(el: any, pageH: number, pageW: number, pageNum: number = 1, totalPages: number = 1): string {
   let s = '';
 
   switch (el.type) {
@@ -133,7 +133,7 @@ function renderElementToPdf(el: any, pageH: number, pageW: number): string {
       s += `${x} ${y} Td\n`;
 
       // Split content into lines
-      const lines = (el.content || '').split('\n');
+      const lines = resolveVariables(el.content || '', pageNum, totalPages).split('\n');
       for (let i = 0; i < lines.length; i++) {
         const escaped = escPdfString(lines[i]);
         if (i === 0) {
@@ -261,7 +261,7 @@ function renderElementToPdf(el: any, pageH: number, pageW: number): string {
       const fontKey = el.fontWeight === 'bold' ? '/F2' : el.fontStyle === 'italic' ? '/F3' : '/F1';
 
       // Render text content
-      const content = el.content || '';
+      const content = resolveVariables(el.content || '', pageNum, totalPages);
       if (content) {
         const lines = content.split('\n');
         let yPos = pageH - (el.y || 72) - fontSize;

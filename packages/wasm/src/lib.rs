@@ -196,6 +196,8 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
     // Parse pages
     if let Some(pages) = model.get("pages").and_then(|p| p.as_array()) {
         let font_name = doc.add_builtin_font(BuiltinFont::Helvetica);
+        let font_bold = doc.add_builtin_font(BuiltinFont::HelveticaBold);
+        let font_italic = doc.add_builtin_font(BuiltinFont::HelveticaOblique);
 
         for page_val in pages {
             let width = page_val.get("width").and_then(|v| v.as_f64()).unwrap_or(595.0);
@@ -208,6 +210,8 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
             });
 
             doc.use_font_on_page(page_idx, &font_name);
+            doc.use_font_on_page(page_idx, &font_bold);
+            doc.use_font_on_page(page_idx, &font_italic);
 
             // Parse elements
             if let Some(elements) = page_val.get("elements").and_then(|e| e.as_array()) {
@@ -220,26 +224,44 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
                             let text = elem.get("content").and_then(|v| v.as_str()).unwrap_or("");
                             let size = elem.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(12.0);
                             let color = elem.get("color").and_then(|v| v.as_str()).unwrap_or("#000000");
+                            let weight = elem.get("fontWeight").and_then(|v| v.as_str()).unwrap_or("");
+                            let style = elem.get("fontStyle").and_then(|v| v.as_str()).unwrap_or("");
+                            let active_font = if weight == "bold" { &font_bold } else if style == "italic" { &font_italic } else { &font_name };
 
-                            let cs = doc.page_content(page_idx);
-                            cs.save_state();
-                            if let Some(c) = Color::from_hex(color) {
-                                cs.set_fill_color(&c);
+                            if !text.is_empty() {
+                                let line_height = size * 1.2;
+                                let mut y_pos = height - y - size;
+                                let cs = doc.page_content(page_idx);
+                                cs.save_state();
+                                if let Some(c) = Color::from_hex(color) {
+                                    cs.set_fill_color(&c);
+                                }
+                                for line in text.split('\n') {
+                                    cs.begin_text();
+                                    cs.set_font(active_font, size);
+                                    cs.text_move(x, y_pos);
+                                    cs.show_text(line);
+                                    cs.end_text();
+                                    y_pos -= line_height;
+                                }
+                                cs.restore_state();
                             }
-                            cs.begin_text();
-                            cs.set_font(&font_name, size);
-                            cs.text_move(x, height - y - size);
-                            cs.show_text(text);
-                            cs.end_text();
-                            cs.restore_state();
                         }
                         "shape" => {
                             let x = elem.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
                             let y = elem.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
                             let w = elem.get("width").and_then(|v| v.as_f64()).unwrap_or(100.0);
                             let h = elem.get("height").and_then(|v| v.as_f64()).unwrap_or(100.0);
-                            let fill = elem.get("fill").and_then(|v| v.as_str()).unwrap_or("");
-                            let stroke = elem.get("stroke").and_then(|v| v.as_str()).unwrap_or("#000000");
+                            // fill/stroke can be objects { color: "#..." } or strings
+                            let fill = elem.get("fill")
+                                .and_then(|v| v.get("color").and_then(|c| c.as_str()).or_else(|| v.as_str()))
+                                .unwrap_or("");
+                            let stroke = elem.get("stroke")
+                                .and_then(|v| v.get("color").and_then(|c| c.as_str()).or_else(|| v.as_str()))
+                                .unwrap_or("#000000");
+                            let stroke_width = elem.get("stroke")
+                                .and_then(|v| v.get("width").and_then(|w| w.as_f64()))
+                                .unwrap_or(1.0);
 
                             let cs = doc.page_content(page_idx);
                             cs.save_state();
@@ -247,7 +269,7 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
                                 if let Some(c) = Color::from_hex(fill) { cs.set_fill_color(&c); }
                             }
                             if let Some(c) = Color::from_hex(stroke) { cs.set_stroke_color(&c); }
-                            cs.set_line_width(1.0);
+                            cs.set_line_width(stroke_width);
                             cs.rect(x, height - y - h, w, h);
                             if !fill.is_empty() {
                                 cs.fill_and_stroke();
@@ -256,8 +278,164 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
                             }
                             cs.restore_state();
                         }
+                        "documentBody" => {
+                            let x = elem.get("x").and_then(|v| v.as_f64()).unwrap_or(72.0);
+                            let y = elem.get("y").and_then(|v| v.as_f64()).unwrap_or(72.0);
+                            // Use content, or fall back to joining spans[].text
+                            let content_str = elem.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                            let spans_text = if content_str.is_empty() {
+                                elem.get("spans")
+                                    .and_then(|v| v.as_array())
+                                    .map(|spans| {
+                                        spans.iter()
+                                            .filter_map(|s| s.get("text").and_then(|t| t.as_str()))
+                                            .collect::<Vec<_>>()
+                                            .join("")
+                                    })
+                                    .unwrap_or_default()
+                            } else {
+                                String::new()
+                            };
+                            let text = if content_str.is_empty() { spans_text.as_str() } else { content_str };
+                            let size = elem.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(14.0);
+                            let color = elem.get("color").and_then(|v| v.as_str()).unwrap_or("#000000");
+                            let weight = elem.get("fontWeight").and_then(|v| v.as_str()).unwrap_or("");
+                            let style = elem.get("fontStyle").and_then(|v| v.as_str()).unwrap_or("");
+                            let active_font = if weight == "bold" { &font_bold } else if style == "italic" { &font_italic } else { &font_name };
+                            let line_height_mult = elem.get("lineHeight").and_then(|v| v.as_f64()).unwrap_or(1.2);
+
+                            if !text.is_empty() {
+                                let line_height = size * line_height_mult;
+                                let mut y_pos = height - y - size;
+                                let cs = doc.page_content(page_idx);
+                                cs.save_state();
+                                if let Some(c) = Color::from_hex(color) {
+                                    cs.set_fill_color(&c);
+                                }
+                                for line in text.split('\n') {
+                                    cs.begin_text();
+                                    cs.set_font(active_font, size);
+                                    cs.text_move(x, y_pos);
+                                    cs.show_text(line);
+                                    cs.end_text();
+                                    y_pos -= line_height;
+                                }
+                                cs.restore_state();
+                            }
+
+                            // Border
+                            if let Some(border) = elem.get("border") {
+                                let bstyle = border.get("style").and_then(|v| v.as_str()).unwrap_or("none");
+                                let bwidth = border.get("width").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                if bstyle != "none" && bwidth > 0.0 {
+                                    let bcolor = border.get("color").and_then(|v| v.as_str()).unwrap_or("#000000");
+                                    let bx = elem.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                    let by_val = elem.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                    let bw = elem.get("width").and_then(|v| v.as_f64()).unwrap_or(100.0);
+                                    let bh = elem.get("height").and_then(|v| v.as_f64()).unwrap_or(100.0);
+                                    let cs = doc.page_content(page_idx);
+                                    cs.save_state();
+                                    if let Some(c) = Color::from_hex(bcolor) { cs.set_stroke_color(&c); }
+                                    cs.set_line_width(bwidth);
+                                    cs.rect(bx, height - by_val - bh, bw, bh);
+                                    cs.stroke();
+                                    cs.restore_state();
+                                }
+                            }
+                        }
+                        "table" => {
+                            let columns = elem.get("columns").and_then(|v| v.as_array());
+                            let rows = elem.get("rows").and_then(|v| v.as_array());
+                            if let (Some(cols), Some(rows)) = (columns, rows) {
+                                let ex = elem.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                let ey = elem.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                let ew = elem.get("width").and_then(|v| v.as_f64()).unwrap_or(400.0);
+                                let total_w: f64 = cols.iter()
+                                    .filter_map(|c| c.get("width").and_then(|w| w.as_f64()))
+                                    .sum();
+                                let scale_x = if total_w > 0.0 { ew / total_w } else { 1.0 };
+                                let mut ty = ey;
+
+                                for (ri, row) in rows.iter().enumerate() {
+                                    let row_h = row.get("height").and_then(|v| v.as_f64()).unwrap_or(30.0);
+                                    let cells = row.get("cells").and_then(|v| v.as_array());
+                                    let mut tx = ex;
+                                    if let Some(cells) = cells {
+                                        for (ci, cell) in cells.iter().enumerate() {
+                                            let cw = cols.get(ci)
+                                                .and_then(|c| c.get("width").and_then(|w| w.as_f64()))
+                                                .unwrap_or(100.0) * scale_x;
+                                            let pdf_y = height - ty - row_h;
+
+                                            // Cell border
+                                            let cs = doc.page_content(page_idx);
+                                            cs.save_state();
+                                            if let Some(c) = Color::from_hex("#C0C0C0") { cs.set_stroke_color(&c); }
+                                            cs.set_line_width(0.5);
+                                            cs.rect(tx, pdf_y, cw, row_h);
+                                            cs.stroke();
+                                            cs.restore_state();
+
+                                            // Cell text
+                                            let content = cell.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                                            if !content.is_empty() {
+                                                let cs = doc.page_content(page_idx);
+                                                cs.save_state();
+                                                if let Some(c) = Color::from_hex("#000000") { cs.set_fill_color(&c); }
+                                                cs.begin_text();
+                                                cs.set_font(&font_name, 10.0);
+                                                cs.text_move(tx + 4.0, pdf_y + row_h / 2.0 - 4.0);
+                                                cs.show_text(content);
+                                                cs.end_text();
+                                                cs.restore_state();
+                                            }
+                                            tx += cw;
+                                        }
+                                    }
+                                    ty += row_h;
+                                }
+                            }
+                        }
                         _ => {}
                     }
+                }
+            }
+
+            // Render header
+            if let Some(header) = page_val.get("header") {
+                let enabled = header.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                let text = header.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if enabled && !text.is_empty() {
+                    let size = header.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(10.0);
+                    let color = header.get("color").and_then(|v| v.as_str()).unwrap_or("#666666");
+                    let cs = doc.page_content(page_idx);
+                    cs.save_state();
+                    if let Some(c) = Color::from_hex(color) { cs.set_fill_color(&c); }
+                    cs.begin_text();
+                    cs.set_font(&font_name, size);
+                    cs.text_move(width / 2.0 - (text.len() as f64 * size * 0.25), height - 20.0 - size);
+                    cs.show_text(text);
+                    cs.end_text();
+                    cs.restore_state();
+                }
+            }
+
+            // Render footer
+            if let Some(footer) = page_val.get("footer") {
+                let enabled = footer.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                let text = footer.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if enabled && !text.is_empty() {
+                    let size = footer.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(10.0);
+                    let color = footer.get("color").and_then(|v| v.as_str()).unwrap_or("#666666");
+                    let cs = doc.page_content(page_idx);
+                    cs.save_state();
+                    if let Some(c) = Color::from_hex(color) { cs.set_fill_color(&c); }
+                    cs.begin_text();
+                    cs.set_font(&font_name, size);
+                    cs.text_move(width / 2.0 - (text.len() as f64 * size * 0.25), 20.0);
+                    cs.show_text(text);
+                    cs.end_text();
+                    cs.restore_state();
                 }
             }
         }
