@@ -334,8 +334,8 @@ export function Canvas() {
 
       const hit = page ? hitTest(x, y, page.elements) : null;
       if (hit) {
-        // Single-click on text → enter editing mode directly
-        if (hit.type === 'text') {
+        // Double-click on text → enter editing mode
+        if (hit.type === 'text' && e.detail === 2) {
           setEditingTextId(hit.id);
           setEditingCursorPos((hit as any).content?.length ?? 0);
           setSelectedIds([hit.id]);
@@ -362,6 +362,7 @@ export function Canvas() {
         if (editingTableId && hit.id !== editingTableId) {
           setEditingTable(null);
         }
+        // Single-click on any element → select and start drag
         setSelectedIds([hit.id]);
         setIsDragging(true);
         setDragStart({ x, y });

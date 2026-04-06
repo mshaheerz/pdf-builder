@@ -3,10 +3,11 @@ const nextConfig = {
   webpack: (config, { isServer }) => {
     config.experiments = { ...config.experiments, asyncWebAssembly: true };
 
-    // Handle WASM file output
-    config.output.webassemblyModuleFilename = isServer
-      ? './../static/wasm/[modulehash].wasm'
-      : 'static/wasm/[modulehash].wasm';
+    // Keep Node.js built-ins as externals on server so webpack doesn't bundle them
+    if (isServer) {
+      config.externals = config.externals || [];
+      config.externals.push('zlib');
+    }
 
     return config;
   },

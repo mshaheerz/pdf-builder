@@ -11,7 +11,7 @@ async function ensureWasm() {
 
 export async function exportPdfWasm(documentJson: string): Promise<Uint8Array> {
   await ensureWasm();
-  const resolved = resolveVariablesInJson(documentJson);
+  const resolved = await resolveImagesInJson(resolveVariablesInJson(documentJson));
   return build_pdf_from_json(resolved);
 }
 
@@ -31,7 +31,6 @@ function resolveVariablesInJson(json: string): string {
     if (page.footer?.text) page.footer.text = resolveVariables(page.footer.text, pageNum, totalPages);
     if (page.elements) {
       for (const el of page.elements) {
-        // Ensure content is populated from spans for documentBody elements
         if (el.type === 'documentBody' && el.spans && (!el.content || el.content === '')) {
           el.content = getPlainTextFromSpans(el.spans);
         }
@@ -45,8 +44,57 @@ function resolveVariablesInJson(json: string): string {
 }
 
 // ============================================================================
-// Client-side pure JS PDF generator (supports all features including
-// headers, footers, page numbers, and document body borders)
+// Convert all image src (URL or PNG data URL) to JPEG data URLs via canvas
+// ============================================================================
+async function resolveImagesInJson(json: string): Promise<string> {
+  if (typeof document === 'undefined') return json; // SSR guard
+  const doc = JSON.parse(json);
+  if (!doc.pages) return json;
+
+  for (const page of doc.pages) {
+    for (const el of (page.elements || [])) {
+      if (el.type === 'image' && el.src) {
+        try {
+          const jpegDataUrl = await imageToJpegDataUrl(el.src, el.width || 300, el.height || 200);
+          if (jpegDataUrl) el.src = jpegDataUrl;
+        } catch { /* keep original src */ }
+      }
+    }
+  }
+  return JSON.stringify(doc);
+}
+
+function imageToJpegDataUrl(src: string, fallbackW: number, fallbackH: number): Promise<string | null> {
+  // If already a JPEG data URL, return as-is (no quality loss)
+  if (src.startsWith('data:image/jpeg') || src.startsWith('data:image/jpg')) {
+    return Promise.resolve(src);
+  }
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const doConvert = () => {
+      try {
+        const w = img.naturalWidth || fallbackW;
+        const h = img.naturalHeight || fallbackH;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(null); return; }
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 1.0));
+      } catch { resolve(null); }
+    };
+    img.onload = doConvert;
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+// ============================================================================
+// Client-side pure JS PDF generator
 // ============================================================================
 
 function resolveVariables(text: string, pageNum: number, totalPages: number): string {
@@ -57,34 +105,128 @@ function resolveVariables(text: string, pageNum: number, totalPages: number): st
     .replace(/\{\{time\}\}/g, new Date().toLocaleTimeString());
 }
 
-export function exportPdfClient(documentJson: string): Uint8Array {
-  const doc = JSON.parse(documentJson);
+function decodeDataUrl(dataUrl: string): { bytes: Uint8Array; mime: string } | null {
+  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  const mime = m[1];
+  const bin = atob(m[2]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return { bytes, mime };
+}
+
+function jpegDimensions(data: Uint8Array): { w: number; h: number } | null {
+  if (data[0] !== 0xFF || data[1] !== 0xD8) return null;
+  let i = 2;
+  while (i < data.length - 1) {
+    if (data[i] !== 0xFF) break;
+    const marker = data[i + 1];
+    if (marker === 0xC0 || marker === 0xC1 || marker === 0xC2) {
+      if (i + 8 >= data.length) break;
+      const h = (data[i + 5] << 8) | data[i + 6];
+      const w = (data[i + 7] << 8) | data[i + 8];
+      return { w, h };
+    }
+    if (i + 3 >= data.length) break;
+    const len = (data[i + 2] << 8) | data[i + 3];
+    i += 2 + len;
+  }
+  return null;
+}
+
+function strToBytes(s: string): Uint8Array {
+  const buf = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) buf[i] = s.charCodeAt(i);
+  return buf;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const p of parts) { out.set(p, off); off += p.length; }
+  return out;
+}
+
+interface ImageInfo {
+  objId: number;
+  name: string;
+}
+
+// Now async — converts all images to JPEG first via canvas, then builds PDF
+export async function exportPdfClient(documentJson: string): Promise<Uint8Array> {
+  // Pre-convert all images to JPEG data URLs
+  const resolvedJson = await resolveImagesInJson(resolveVariablesInJson(documentJson));
+  const doc = JSON.parse(resolvedJson);
   const pages = doc.pages || [];
   if (pages.length === 0) pages.push({ width: 595, height: 842, elements: [] });
 
-  const objects: string[] = [];
+  const objectChunks: Uint8Array[] = [];
   let objNum = 0;
 
-  function addObj(content: string): number {
+  function addObjStr(content: string): number {
     objNum++;
-    objects.push(content);
+    objectChunks.push(strToBytes(content));
     return objNum;
   }
 
-  const fontObjId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-  const fontBoldObjId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
-  const fontItalicObjId = addObj('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>');
-  const gsHalf = addObj('<< /Type /ExtGState /ca 0.4 /CA 0.4 >>');
-  const gsFull = addObj('<< /Type /ExtGState /ca 1.0 /CA 1.0 >>');
+  function addObjBin(content: Uint8Array): number {
+    objNum++;
+    objectChunks.push(content);
+    return objNum;
+  }
+
+  const fontObjId = addObjStr('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+  const fontBoldObjId = addObjStr('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+  const fontItalicObjId = addObjStr('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>');
+  const gsHalf = addObjStr('<< /Type /ExtGState /ca 0.4 /CA 0.4 >>');
+  const gsFull = addObjStr('<< /Type /ExtGState /ca 1.0 /CA 1.0 >>');
+
+  // Collect all images across all pages
+  const allImages: ImageInfo[] = [];
+  for (const page of pages) {
+    for (const el of (page.elements || [])) {
+      if (el.type === 'image' && el.src) {
+        const existing = allImages.find((img) => img.name === `Img${el.id}`);
+        if (existing) continue;
+
+        const decoded = decodeDataUrl(el.src);
+        if (!decoded) continue;
+
+        // After resolveImagesInJson, all images should be JPEG
+        const dims = jpegDimensions(decoded.bytes);
+        const imgW = dims?.w || el.width || 200;
+        const imgH = dims?.h || el.height || 150;
+
+        const header = strToBytes(
+          `<< /Type /XObject /Subtype /Image /Width ${imgW} /Height ${imgH} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${decoded.bytes.length} >>\nstream\n`
+        );
+        const footer = strToBytes('\nendstream');
+        const imgObjBytes = concatBytes(header, decoded.bytes, footer);
+
+        const imgObjId = addObjBin(imgObjBytes);
+        allImages.push({ objId: imgObjId, name: `Img${el.id}` });
+      }
+    }
+  }
 
   const pageObjIds: number[] = [];
   const pagesObjId = objNum + 1;
-  addObj('PLACEHOLDER_PAGES');
+  addObjStr('PLACEHOLDER_PAGES');
 
   for (let pi = 0; pi < pages.length; pi++) {
     const page = pages[pi];
     const w = page.width || 595;
     const h = page.height || 842;
+
+    const pageImageNames: string[] = [];
+    for (const el of (page.elements || [])) {
+      if (el.type === 'image' && el.src) {
+        const img = allImages.find((im) => im.name === `Img${el.id}`);
+        if (img) pageImageNames.push(img.name);
+      }
+    }
 
     let content = '';
 
@@ -94,52 +236,86 @@ export function exportPdfClient(documentJson: string): Uint8Array {
     }
 
     for (const el of (page.elements || [])) {
-      content += renderElementToPdf(el, h, w, pi + 1, pages.length, fontBoldObjId, fontItalicObjId);
+      if (el.type === 'image') {
+        const img = allImages.find((im) => im.name === `Img${el.id}`);
+        if (img) {
+          const x = el.x || 0;
+          const y = h - (el.y || 0) - (el.height || 150);
+          const dw = el.width || 200;
+          const dh = el.height || 150;
+          content += `q\n${dw} 0 0 ${dh} ${x} ${y} cm\n/${img.name} Do\nQ\n`;
+        }
+      } else {
+        content += renderElementToPdf(el, h, w, pi + 1, pages.length, fontBoldObjId, fontItalicObjId);
+      }
     }
 
     content += renderPageOverlaysToPdf(page, h, w, pi + 1, pages.length);
 
-    const contentObjId = addObj(`<< /Length ${content.length} >>\nstream\n${content}endstream`);
-    const resources = `<< /Font << /F1 ${fontObjId} 0 R /F2 ${fontBoldObjId} 0 R /F3 ${fontItalicObjId} 0 R >> /ExtGState << /GS1 ${gsHalf} 0 R /GS2 ${gsFull} 0 R >> >>`;
-    const pageObjId = addObj(
+    const contentObjId = addObjStr(`<< /Length ${content.length} >>\nstream\n${content}endstream`);
+
+    let xobjDict = '';
+    if (pageImageNames.length > 0) {
+      const entries = pageImageNames.map((name) => {
+        const img = allImages.find((im) => im.name === name)!;
+        return `/${name} ${img.objId} 0 R`;
+      }).join(' ');
+      xobjDict = ` /XObject << ${entries} >>`;
+    }
+
+    const resources = `<< /Font << /F1 ${fontObjId} 0 R /F2 ${fontBoldObjId} 0 R /F3 ${fontItalicObjId} 0 R >> /ExtGState << /GS1 ${gsHalf} 0 R /GS2 ${gsFull} 0 R >>${xobjDict} >>`;
+    const pageObjId = addObjStr(
       `<< /Type /Page /Parent ${pagesObjId} 0 R /MediaBox [0 0 ${w} ${h}] /Contents ${contentObjId} 0 R /Resources ${resources} >>`
     );
     pageObjIds.push(pageObjId);
   }
 
   const kidsStr = pageObjIds.map((id) => `${id} 0 R`).join(' ');
-  objects[pagesObjId - 1] = `<< /Type /Pages /Kids [${kidsStr}] /Count ${pageObjIds.length} >>`;
+  objectChunks[pagesObjId - 1] = strToBytes(`<< /Type /Pages /Kids [${kidsStr}] /Count ${pageObjIds.length} >>`);
 
-  const catalogId = addObj(`<< /Type /Catalog /Pages ${pagesObjId} 0 R >>`);
+  const catalogId = addObjStr(`<< /Type /Catalog /Pages ${pagesObjId} 0 R >>`);
   const now = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14);
-  addObj(`<< /Creator (PDF Builder) /Producer (PDF Builder Client) /CreationDate (D:${now}) >>`);
+  addObjStr(`<< /Creator (PDF Builder) /Producer (PDF Builder Client) /CreationDate (D:${now}) >>`);
 
-  let pdf = '%PDF-1.7\n%\xE2\xE3\xCF\xD3\n';
+  // Assemble final PDF as binary
+  const parts: Uint8Array[] = [];
+  let totalLen = 0;
+
+  function appendStr(s: string) {
+    const b = strToBytes(s);
+    parts.push(b);
+    totalLen += b.length;
+  }
+
+  appendStr('%PDF-1.7\n%\xE2\xE3\xCF\xD3\n');
   const offsets: number[] = [];
 
-  for (let i = 0; i < objects.length; i++) {
-    offsets.push(pdf.length);
-    pdf += `${i + 1} 0 obj\n${objects[i]}\nendobj\n\n`;
+  for (let i = 0; i < objectChunks.length; i++) {
+    offsets.push(totalLen);
+    appendStr(`${i + 1} 0 obj\n`);
+    parts.push(objectChunks[i]);
+    totalLen += objectChunks[i].length;
+    appendStr('\nendobj\n\n');
   }
 
-  const xrefOffset = pdf.length;
-  pdf += 'xref\n';
-  pdf += `0 ${objects.length + 1}\n`;
-  pdf += '0000000000 65535 f \n';
+  const xrefOffset = totalLen;
+  appendStr('xref\n');
+  appendStr(`0 ${objectChunks.length + 1}\n`);
+  appendStr('0000000000 65535 f \n');
   for (const off of offsets) {
-    pdf += off.toString().padStart(10, '0') + ' 00000 n \n';
+    appendStr(off.toString().padStart(10, '0') + ' 00000 n \n');
   }
 
-  pdf += 'trailer\n';
-  pdf += `<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\n`;
-  pdf += 'startxref\n';
-  pdf += `${xrefOffset}\n`;
-  pdf += '%%EOF\n';
+  appendStr('trailer\n');
+  appendStr(`<< /Size ${objectChunks.length + 1} /Root ${catalogId} 0 R >>\n`);
+  appendStr('startxref\n');
+  appendStr(`${xrefOffset}\n`);
+  appendStr('%%EOF\n');
 
-  return new TextEncoder().encode(pdf);
+  return concatBytes(...parts);
 }
 
-function renderElementToPdf(el: any, pageH: number, pageW: number, pageNum: number, totalPages: number, _fontBold?: number, _fontItalic?: number): string {
+function renderElementToPdf(el: any, pageH: number, _pageW: number, pageNum: number, totalPages: number, _fontBold?: number, _fontItalic?: number): string {
   let s = '';
 
   switch (el.type) {
@@ -177,7 +353,7 @@ function renderElementToPdf(el: any, pageH: number, pageW: number, pageNum: numb
       const content = resolveVariables(el.content || '', pageNum, totalPages);
       if (content) {
         const lines = content.split('\n');
-        let yPos = pageH - (el.y || 72) - fontSize;
+        const yPos = pageH - (el.y || 72) - fontSize;
         s += 'q\n';
         s += `${color.r} ${color.g} ${color.b} rg\n`;
         s += 'BT\n';

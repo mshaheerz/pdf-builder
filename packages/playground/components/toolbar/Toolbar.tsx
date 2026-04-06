@@ -271,11 +271,11 @@ export function Toolbar() {
     }
   }, [exportToJson]);
 
-  const handleExportPdfClient = useCallback(() => {
+  const handleExportPdfClient = useCallback(async () => {
     setShowExportMenu(false);
     const json = exportToJson();
     try {
-      const pdfBytes = exportPdfClient(json);
+      const pdfBytes = await exportPdfClient(json);
       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 #[wasm_bindgen]
 pub struct WasmPdfBuilder {
-    doc: Option<PdfDocument>,
+    doc: Option<PdfDocument>,   
     fonts: Vec<(String, String)>, // (internal_name, display_name)
 }
 
@@ -199,7 +199,9 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
         let font_bold = doc.add_builtin_font(BuiltinFont::HelveticaBold);
         let font_italic = doc.add_builtin_font(BuiltinFont::HelveticaOblique);
 
-        for page_val in pages {
+        let total_pages = pages.len();
+        for (pi, page_val) in pages.iter().enumerate() {
+            let page_num = pi + 1;
             let width = page_val.get("width").and_then(|v| v.as_f64()).unwrap_or(595.0);
             let height = page_val.get("height").and_then(|v| v.as_f64()).unwrap_or(842.0);
 
@@ -212,6 +214,20 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
             doc.use_font_on_page(page_idx, &font_name);
             doc.use_font_on_page(page_idx, &font_bold);
             doc.use_font_on_page(page_idx, &font_italic);
+
+            // Page background
+            if let Some(bg) = page_val.get("background").and_then(|v| v.as_str()) {
+                if bg != "#FFFFFF" && bg != "#ffffff" {
+                    if let Some(c) = Color::from_hex(bg) {
+                        let cs = doc.page_content(page_idx);
+                        cs.save_state();
+                        cs.set_fill_color(&c);
+                        cs.rect(0.0, 0.0, width, height);
+                        cs.fill();
+                        cs.restore_state();
+                    }
+                }
+            }
 
             // Parse elements
             if let Some(elements) = page_val.get("elements").and_then(|e| e.as_array()) {
@@ -396,6 +412,83 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
                                 }
                             }
                         }
+                        "drawing" => {
+                            let ox = elem.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let oy = elem.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            if let Some(paths) = elem.get("paths").and_then(|v| v.as_array()) {
+                                for path in paths {
+                                    let points = path.get("points").and_then(|v| v.as_array());
+                                    let points = match points {
+                                        Some(p) if p.len() >= 2 => p,
+                                        _ => continue,
+                                    };
+                                    let color = path.get("color").and_then(|v| v.as_str()).unwrap_or("#000000");
+                                    let line_w = path.get("width").and_then(|v| v.as_f64()).unwrap_or(2.0);
+                                    let tool = path.get("tool").and_then(|v| v.as_str()).unwrap_or("pencil");
+
+                                    let cs = doc.page_content(page_idx);
+                                    cs.save_state();
+
+                                    if tool == "marker" {
+                                        let gs_name = doc.add_opacity(0.4, 0.4);
+                                        doc.use_gstate_on_page(page_idx, &gs_name);
+                                        let cs = doc.page_content(page_idx);
+                                        cs.set_ext_graphics_state(&gs_name);
+                                    }
+
+                                    let cs = doc.page_content(page_idx);
+                                    if let Some(c) = Color::from_hex(color) { cs.set_stroke_color(&c); }
+                                    cs.set_line_width(line_w);
+                                    cs.set_line_cap(pdf_builder_core::pdf::graphics_state::LineCap::Round);
+                                    cs.set_line_join(pdf_builder_core::pdf::graphics_state::LineJoin::Round);
+
+                                    let px0 = points[0].get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                    let py0 = points[0].get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                    cs.move_to(ox + px0, height - oy - py0);
+                                    for pt in &points[1..] {
+                                        let px = pt.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                        let py = pt.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                        cs.line_to(ox + px, height - oy - py);
+                                    }
+                                    cs.stroke();
+                                    cs.restore_state();
+                                }
+                            }
+                        }
+                        "image" => {
+                            let x = elem.get("x").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let y = elem.get("y").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            let dw = elem.get("width").and_then(|v| v.as_f64()).unwrap_or(200.0);
+                            let dh = elem.get("height").and_then(|v| v.as_f64()).unwrap_or(150.0);
+                            let src = elem.get("src").and_then(|v| v.as_str()).unwrap_or("");
+
+                            if let Some(b64_start) = src.find("base64,") {
+                                let b64_data = &src[b64_start + 7..];
+                                if let Ok(img_bytes) = base64_decode(b64_data) {
+                                    let is_jpeg = src.contains("image/jpeg") || src.contains("image/jpg")
+                                        || (img_bytes.len() >= 2 && img_bytes[0] == 0xFF && img_bytes[1] == 0xD8);
+
+                                    if is_jpeg {
+                                        let (iw, ih) = jpeg_dimensions(&img_bytes).unwrap_or((dw as u32, dh as u32));
+                                        let img_name = doc.add_jpeg_image(img_bytes, iw, ih);
+                                        doc.use_image_on_page(page_idx, &img_name);
+                                        let cs = doc.page_content(page_idx);
+                                        cs.save_state();
+                                        cs.set_transform(dw, 0.0, 0.0, dh, x, height - y - dh);
+                                        cs.draw_xobject(&img_name);
+                                        cs.restore_state();
+                                    } else if let Ok(img_data) = pdf_builder_core::image::decoder::decode_png(&img_bytes) {
+                                        let img_name = doc.add_rgb_image(img_data.data, img_data.width, img_data.height);
+                                        doc.use_image_on_page(page_idx, &img_name);
+                                        let cs = doc.page_content(page_idx);
+                                        cs.save_state();
+                                        cs.set_transform(dw, 0.0, 0.0, dh, x, height - y - dh);
+                                        cs.draw_xobject(&img_name);
+                                        cs.restore_state();
+                                    }
+                                }
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -408,12 +501,18 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
                 if enabled && !text.is_empty() {
                     let size = header.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(10.0);
                     let color = header.get("color").and_then(|v| v.as_str()).unwrap_or("#666666");
+                    let align = header.get("align").and_then(|v| v.as_str()).unwrap_or("center");
+                    let x = match align {
+                        "left" => 40.0,
+                        "right" => width - 40.0 - text.len() as f64 * size * 0.5,
+                        _ => width / 2.0 - text.len() as f64 * size * 0.25,
+                    };
                     let cs = doc.page_content(page_idx);
                     cs.save_state();
                     if let Some(c) = Color::from_hex(color) { cs.set_fill_color(&c); }
                     cs.begin_text();
                     cs.set_font(&font_name, size);
-                    cs.text_move(width / 2.0 - (text.len() as f64 * size * 0.25), height - 20.0 - size);
+                    cs.text_move(x, height - 20.0 - size);
                     cs.show_text(text);
                     cs.end_text();
                     cs.restore_state();
@@ -427,13 +526,57 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
                 if enabled && !text.is_empty() {
                     let size = footer.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(10.0);
                     let color = footer.get("color").and_then(|v| v.as_str()).unwrap_or("#666666");
+                    let align = footer.get("align").and_then(|v| v.as_str()).unwrap_or("center");
+                    let x = match align {
+                        "left" => 40.0,
+                        "right" => width - 40.0 - text.len() as f64 * size * 0.5,
+                        _ => width / 2.0 - text.len() as f64 * size * 0.25,
+                    };
                     let cs = doc.page_content(page_idx);
                     cs.save_state();
                     if let Some(c) = Color::from_hex(color) { cs.set_fill_color(&c); }
                     cs.begin_text();
                     cs.set_font(&font_name, size);
-                    cs.text_move(width / 2.0 - (text.len() as f64 * size * 0.25), 20.0);
+                    cs.text_move(x, 20.0);
                     cs.show_text(text);
+                    cs.end_text();
+                    cs.restore_state();
+                }
+            }
+
+            // Render page number
+            if let Some(pn) = page_val.get("pageNumber") {
+                let enabled = pn.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                if enabled {
+                    let size = pn.get("fontSize").and_then(|v| v.as_f64()).unwrap_or(10.0);
+                    let color = pn.get("color").and_then(|v| v.as_str()).unwrap_or("#666666");
+                    let format = pn.get("format").and_then(|v| v.as_str()).unwrap_or("1");
+                    let position = pn.get("position").and_then(|v| v.as_str()).unwrap_or("bottom-center");
+
+                    let text = match format {
+                        "Page 1" => format!("Page {}", page_num),
+                        "1 of N" => format!("{} of {}", page_num, total_pages),
+                        "Page 1 of N" => format!("Page {} of {}", page_num, total_pages),
+                        _ => format!("{}", page_num),
+                    };
+
+                    let is_top = position.starts_with("top");
+                    let y = if is_top { height - 20.0 - size } else { 20.0 };
+                    let x = if position.ends_with("left") {
+                        40.0
+                    } else if position.ends_with("right") {
+                        width - 40.0 - text.len() as f64 * size * 0.5
+                    } else {
+                        width / 2.0 - text.len() as f64 * size * 0.25
+                    };
+
+                    let cs = doc.page_content(page_idx);
+                    cs.save_state();
+                    if let Some(c) = Color::from_hex(color) { cs.set_fill_color(&c); }
+                    cs.begin_text();
+                    cs.set_font(&font_name, size);
+                    cs.text_move(x, y);
+                    cs.show_text(&text);
                     cs.end_text();
                     cs.restore_state();
                 }
@@ -443,3 +586,52 @@ fn build_from_model(model: &serde_json::Value) -> Vec<u8> {
 
     doc.build()
 }
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, ()> {
+    let table: [u8; 128] = {
+        let mut t = [255u8; 128];
+        let chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (i, &c) in chars.iter().enumerate() {
+            t[c as usize] = i as u8;
+        }
+        t
+    };
+    let filtered: Vec<u8> = input.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
+    let mut out = Vec::with_capacity(filtered.len() * 3 / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for &b in &filtered {
+        if b == b'=' { break; }
+        let val = if (b as usize) < 128 { table[b as usize] } else { 255 };
+        if val == 255 { return Err(()); }
+        buf = (buf << 6) | val as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Ok(out)
+}
+
+fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    if data.len() < 2 || data[0] != 0xFF || data[1] != 0xD8 { return None; }
+    let mut i = 2;
+    while i < data.len().saturating_sub(1) {
+        if data[i] != 0xFF { break; }
+        let marker = data[i + 1];
+        if marker == 0xC0 || marker == 0xC1 || marker == 0xC2 {
+            if i + 8 < data.len() {
+                let h = ((data[i + 5] as u32) << 8) | data[i + 6] as u32;
+                let w = ((data[i + 7] as u32) << 8) | data[i + 8] as u32;
+                return Some((w, h));
+            }
+        }
+        if i + 3 >= data.len() { break; }
+        let len = ((data[i + 2] as usize) << 8) | data[i + 3] as usize;
+        i += 2 + len;
+    }
+    None
+}
+
