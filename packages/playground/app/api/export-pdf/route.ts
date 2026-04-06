@@ -223,6 +223,9 @@ function generatePdf(doc: any): Uint8Array {
         const decoded = decodeDataUrl(el.src);
         if (!decoded) continue;
         const isJpeg = decoded.mime === 'image/jpeg' || decoded.mime === 'image/jpg';
+        const isPng = decoded.mime === 'image/png';
+        // Skip unsupported formats (SVG, GIF, WebP, etc.) — these should be pre-converted client-side
+        if (!isJpeg && !isPng) continue;
         const dims = isJpeg ? jpegDimensions(decoded.bytes) : pngDimensions(decoded.bytes);
         const imgW = dims?.w || el.originalWidth || el.width || 200;
         const imgH = dims?.h || el.originalHeight || el.height || 150;

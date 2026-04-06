@@ -2,7 +2,7 @@
 
 import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextSpan } from '@/store/document-store';
 import { useCallback, useState } from 'react';
-import { exportPdfWasm, exportPdfClient } from '@/lib/pdf-export';
+import { exportPdfWasm, exportPdfClient, resolveImagesInJson } from '@/lib/pdf-export';
 import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle, getParagraphRange, insertText as spanInsertText } from '@/store/span-utils';
 import { resolveVariables } from '@/store/variable-utils';
 import {
@@ -291,7 +291,9 @@ export function Toolbar() {
     setShowExportMenu(false);
     const json = exportToJson();
     try {
-      const res = await fetch('/api/export-pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: json });
+      // Pre-convert all images (SVG, PNG, etc.) to JPEG client-side before sending to server
+      const resolvedJson = await resolveImagesInJson(json);
+      const res = await fetch('/api/export-pdf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: resolvedJson });
       if (!res.ok) throw new Error('PDF generation failed');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);

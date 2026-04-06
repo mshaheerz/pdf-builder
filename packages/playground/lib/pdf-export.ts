@@ -46,7 +46,7 @@ function resolveVariablesInJson(json: string): string {
 // ============================================================================
 // Convert all image src (URL or PNG data URL) to JPEG data URLs via canvas
 // ============================================================================
-async function resolveImagesInJson(json: string): Promise<string> {
+export async function resolveImagesInJson(json: string): Promise<string> {
   if (typeof document === 'undefined') return json; // SSR guard
   const doc = JSON.parse(json);
   if (!doc.pages) return json;
@@ -70,12 +70,19 @@ function imageToJpegDataUrl(src: string, fallbackW: number, fallbackH: number): 
     return Promise.resolve(src);
   }
   return new Promise((resolve) => {
+    // Timeout after 5s to avoid hanging on broken images
+    const timer = setTimeout(() => resolve(null), 5000);
     const img = new Image();
     img.crossOrigin = 'anonymous';
     const doConvert = () => {
+      clearTimeout(timer);
       try {
-        const w = img.naturalWidth || fallbackW;
-        const h = img.naturalHeight || fallbackH;
+        // For SVG, naturalWidth/Height may be 0, use fallback dimensions
+        let w = img.naturalWidth || fallbackW;
+        let h = img.naturalHeight || fallbackH;
+        // SVGs may report very small or 0 natural dimensions
+        if (w < 2) w = fallbackW;
+        if (h < 2) h = fallbackH;
         const canvas = document.createElement('canvas');
         canvas.width = w;
         canvas.height = h;
@@ -88,7 +95,7 @@ function imageToJpegDataUrl(src: string, fallbackW: number, fallbackH: number): 
       } catch { resolve(null); }
     };
     img.onload = doConvert;
-    img.onerror = () => resolve(null);
+    img.onerror = () => { clearTimeout(timer); resolve(null); };
     img.src = src;
   });
 }
