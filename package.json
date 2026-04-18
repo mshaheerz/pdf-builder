@@ -10,9 +10,7 @@
     "build:sdk": "cd packages/sdk && pnpm build",
     "build:playground": "cd packages/playground && pnpm build",
     "dev": "cd packages/playground && pnpm dev",
-    "build": "turbo run build"
+    "build": "pnpm --filter @pdf-builder/sdk build && pnpm --filter @pdf-builder/playground build"
   },
-  "devDependencies": {
-    "turbo": "^2.0.0"
-  }
+  "devDependencies": {}
 }
