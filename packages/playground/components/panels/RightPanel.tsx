@@ -105,6 +105,14 @@ export function RightPanel() {
               <span className="text-[10px] w-8 text-right">{Math.round(selectedEl.opacity * 100)}%</span>
             </div>
           </PropRow>
+          <PropRow label="Blend">
+            <select value={(selectedEl as any).blendMode || 'normal'} onChange={(e) => update({ blendMode: e.target.value as any })}
+              className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-1.5 py-1 focus:border-editor-accent outline-none">
+              {['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'color-dodge', 'color-burn', 'hard-light', 'soft-light', 'difference', 'exclusion', 'hue', 'saturation', 'color', 'luminosity'].map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </PropRow>
 
           {selectedEl.type === 'text' && <TextProperties el={selectedEl as any} update={update} />}
           {selectedEl.type === 'shape' && <ShapeProperties el={selectedEl as any} update={update} />}
@@ -296,6 +304,38 @@ function DrawingProperties({ el }: { el: any }) {
 
 function TableProperties({ el, update }: { el: any; update: (u: any) => void }) {
   const { activePage } = useDocumentStore();
+
+  const updateRowColor = (ri: number, color: string | undefined) => {
+    const newRows = (el.rows || []).map((r: any, i: number) => {
+      if (i !== ri) return r;
+      return { ...r, cells: r.cells.map((c: any) => ({ ...c, background: color })) };
+    });
+    useDocumentStore.getState().pushHistory();
+    update({ rows: newRows });
+  };
+
+  const updateCellColor = (ri: number, ci: number, color: string | undefined) => {
+    const newRows = (el.rows || []).map((r: any, i: number) => {
+      if (i !== ri) return r;
+      return { ...r, cells: r.cells.map((c: any, j: number) => j === ci ? { ...c, background: color } : c) };
+    });
+    useDocumentStore.getState().pushHistory();
+    update({ rows: newRows });
+  };
+
+  const applyZebra = (even: string, odd: string) => {
+    const newRows = (el.rows || []).map((r: any, i: number) => {
+      if (i === 0) return r; // keep header
+      const bg = i % 2 === 0 ? even : odd;
+      return { ...r, cells: r.cells.map((c: any) => ({ ...c, background: bg })) };
+    });
+    useDocumentStore.getState().pushHistory();
+    update({ rows: newRows });
+  };
+
+  const headerRow = (el.rows || [])[0];
+  const headerColor = headerRow?.cells?.[0]?.background || '#E8E8FF';
+
   return (
     <>
       <SectionTitle>Table</SectionTitle>
@@ -316,17 +356,55 @@ function TableProperties({ el, update }: { el: any; update: (u: any) => void }) 
         }} className="flex-1 px-2 py-1 text-[10px] bg-editor-bg text-editor-text rounded hover:bg-editor-hover">+ Col</button>
       </div>
 
+      <SectionTitle>Header Row Color</SectionTitle>
+      {headerRow ? (
+        <div className="space-y-1.5">
+          <ColorInput value={headerColor} onChange={(v) => updateRowColor(0, v)} />
+          <button onClick={() => updateRowColor(0, undefined)}
+            className="w-full px-2 py-1 text-[10px] bg-editor-bg text-gray-400 rounded hover:bg-editor-hover">Clear header color</button>
+        </div>
+      ) : (
+        <div className="text-[10px] text-gray-500 italic">No rows yet</div>
+      )}
+
+      <SectionTitle>Quick Styling</SectionTitle>
+      <div className="grid grid-cols-2 gap-1">
+        <button onClick={() => applyZebra('#F8FAFC', '#FFFFFF')}
+          className="px-2 py-1 text-[10px] bg-editor-bg text-editor-text rounded hover:bg-editor-hover">Zebra (Cool)</button>
+        <button onClick={() => applyZebra('#FEF3C7', '#FFFFFF')}
+          className="px-2 py-1 text-[10px] bg-editor-bg text-editor-text rounded hover:bg-editor-hover">Zebra (Warm)</button>
+        <button onClick={() => applyZebra('#F3F4F6', '#FFFFFF')}
+          className="px-2 py-1 text-[10px] bg-editor-bg text-editor-text rounded hover:bg-editor-hover">Zebra (Gray)</button>
+        <button onClick={() => {
+          const newRows = (el.rows || []).map((r: any, i: number) => i === 0 ? r : ({ ...r, cells: r.cells.map((c: any) => ({ ...c, background: undefined })) }));
+          useDocumentStore.getState().pushHistory();
+          update({ rows: newRows });
+        }} className="px-2 py-1 text-[10px] bg-editor-bg text-gray-400 rounded hover:bg-editor-hover">Clear bodies</button>
+      </div>
+
       <SectionTitle>Cell Contents</SectionTitle>
-      <div className="space-y-1 max-h-64 overflow-y-auto">
+      <div className="space-y-2 max-h-72 overflow-y-auto">
         {(el.rows || []).map((row: any, ri: number) => (
-          <div key={ri} className="space-y-0.5">
-            <div className="text-[8px] text-gray-500">Row {ri + 1}</div>
+          <div key={ri} className="space-y-0.5 pb-1 border-b border-editor-border/40">
+            <div className="flex items-center gap-1.5">
+              <div className="text-[9px] text-gray-400 flex-shrink-0">{ri === 0 ? 'Header' : `Row ${ri}`}</div>
+              <input type="color" value={row.cells?.[0]?.background || '#FFFFFF'}
+                onChange={(e) => updateRowColor(ri, e.target.value)}
+                className="w-5 h-5 cursor-pointer rounded border border-editor-border" title="Row color" />
+              <button onClick={() => updateRowColor(ri, undefined)}
+                className="text-[9px] text-gray-500 hover:text-gray-300 ml-auto" title="Clear row color">clear</button>
+            </div>
             <div className="flex gap-0.5">
               {(row.cells || []).map((cell: any, ci: number) => (
-                <textarea key={ci} value={cell.content || ''}
-                  onChange={(e) => { useDocumentStore.getState().pushHistory(); useDocumentStore.getState().updateTableCell(activePage, el.id, ri, ci, e.target.value); }}
-                  placeholder={`R${ri + 1}C${ci + 1}`} rows={Math.max(1, Math.ceil((cell.content || '').length / 12))}
-                  className="flex-1 min-w-0 bg-editor-bg text-editor-text text-[9px] border border-editor-border rounded px-1 py-0.5 focus:border-editor-accent outline-none resize-none" />
+                <div key={ci} className="flex-1 min-w-0 flex flex-col gap-0.5">
+                  <textarea value={cell.content || ''}
+                    onChange={(e) => { useDocumentStore.getState().pushHistory(); useDocumentStore.getState().updateTableCell(activePage, el.id, ri, ci, e.target.value); }}
+                    placeholder={`R${ri + 1}C${ci + 1}`} rows={Math.max(1, Math.ceil((cell.content || '').length / 12))}
+                    className="bg-editor-bg text-editor-text text-[9px] border border-editor-border rounded px-1 py-0.5 focus:border-editor-accent outline-none resize-none" />
+                  <input type="color" value={cell.background || '#FFFFFF'}
+                    onChange={(e) => updateCellColor(ri, ci, e.target.value)}
+                    className="w-full h-3.5 cursor-pointer rounded border border-editor-border" title="Cell color" />
+                </div>
               ))}
             </div>
           </div>

@@ -1,9 +1,9 @@
 'use client';
 
 import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextSpan } from '@/store/document-store';
-import { useCallback, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { exportPdfWasm, exportPdfClient, resolveImagesInJson } from '@/lib/pdf-export';
-import { TEMPLATES } from '@/lib/templates';
+import { TEMPLATES, CATEGORIES, buildWatermark, type Template, type TemplateCategory } from '@/lib/templates';
 import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle, getParagraphRange, insertText as spanInsertText } from '@/store/span-utils';
 import { resolveVariables } from '@/store/variable-utils';
 import {
@@ -16,6 +16,9 @@ import {
   ChevronDown,
   Braces,
   LayoutTemplate,
+  Droplets,
+  X,
+  Search,
 } from 'lucide-react';
 
 /** Prevent toolbar interactions from stealing focus away from canvas */
@@ -201,6 +204,7 @@ export function Toolbar() {
   const [showImageUrlInput, setShowImageUrlInput] = useState(false);
   const [showVariableMenu, setShowVariableMenu] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+  const [showWatermarkModal, setShowWatermarkModal] = useState(false);
 
   const isTextEditorMode = editorMode === 'textEditor';
 
@@ -335,6 +339,17 @@ export function Toolbar() {
     loadTemplate(tpl.build());
     setShowTemplateMenu(false);
   }, [loadTemplate]);
+
+  const handleAddWatermark = useCallback((text: string, color: string, opacity: number, fontSize: number, rotation: number) => {
+    if (!text.trim()) return;
+    const state = useDocumentStore.getState();
+    const page = state.pages[state.activePage];
+    if (!page) return;
+    const watermark = buildWatermark(page.width, page.height, { text: text.trim(), color, opacity, fontSize, rotation });
+    state.pushHistory();
+    state.addElement(state.activePage, watermark);
+    setShowWatermarkModal(false);
+  }, []);
 
   // ---- Rich text helpers ----
   const hasSelection = editingSelectionStart !== null && editingSelectionEnd !== null && editingSelectionStart !== editingSelectionEnd;
@@ -569,7 +584,8 @@ export function Toolbar() {
           <div className="w-px h-6 bg-editor-border mx-1" />
 
           {/* Templates */}
-          <TemplateMenu show={showTemplateMenu} setShow={setShowTemplateMenu} onSelect={handleLoadTemplate} />
+          <TemplateTrigger onClick={() => setShowTemplateMenu(true)} />
+          <WatermarkTrigger onClick={() => setShowWatermarkModal(true)} />
 
           <div className="w-px h-6 bg-editor-border mx-1" />
 
@@ -595,6 +611,8 @@ export function Toolbar() {
             handleExportPdfWasm={handleExportPdfWasm} handleExportPdfServer={handleExportPdfServer} handleExportPdfClient={handleExportPdfClient}
             handleExportJson={handleExportJson} handleExportHtml={handleExportHtml} handleLoadJson={handleLoadJson} />
         </div>
+        {showTemplateMenu && <TemplateGallery onClose={() => setShowTemplateMenu(false)} onSelect={handleLoadTemplate} />}
+        {showWatermarkModal && <WatermarkModal onClose={() => setShowWatermarkModal(false)} onApply={handleAddWatermark} />}
       </div>
     );
   }
@@ -611,7 +629,8 @@ export function Toolbar() {
       </div>
 
       {/* Templates */}
-      <TemplateMenu show={showTemplateMenu} setShow={setShowTemplateMenu} onSelect={handleLoadTemplate} />
+      <TemplateTrigger onClick={() => setShowTemplateMenu(true)} />
+      <WatermarkTrigger onClick={() => setShowWatermarkModal(true)} />
 
       <div className="w-px h-6 bg-editor-border mr-1" />
 
@@ -755,6 +774,10 @@ export function Toolbar() {
       <ExportMenu showExportMenu={showExportMenu} setShowExportMenu={setShowExportMenu}
         handleExportPdfWasm={handleExportPdfWasm} handleExportPdfServer={handleExportPdfServer} handleExportPdfClient={handleExportPdfClient}
         handleExportJson={handleExportJson} handleExportHtml={handleExportHtml} handleLoadJson={handleLoadJson} />
+
+      {/* Modals (rendered at root of toolbar) */}
+      {showTemplateMenu && <TemplateGallery onClose={() => setShowTemplateMenu(false)} onSelect={handleLoadTemplate} />}
+      {showWatermarkModal && <WatermarkModal onClose={() => setShowWatermarkModal(false)} onApply={handleAddWatermark} />}
     </div>
   );
 }
@@ -804,40 +827,290 @@ function ExportMenu({ showExportMenu, setShowExportMenu, handleExportPdfWasm, ha
 }
 
 // ============================================================================
-// Template Menu
+// Template / Watermark triggers and modals
 // ============================================================================
-function TemplateMenu({ show, setShow, onSelect }: {
-  show: boolean; setShow: (v: boolean) => void; onSelect: (id: string) => void;
-}) {
+function TemplateTrigger({ onClick }: { onClick: () => void }) {
   return (
-    <div className="relative">
-      <button onClick={() => setShow(!show)}
-        className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-editor-bg border border-editor-border rounded-md hover:bg-editor-hover transition-all ml-1"
-        title="Load a preset template">
-        <LayoutTemplate size={13} />
-        <span>Templates</span>
-        <ChevronDown size={10} className="text-gray-400" />
-      </button>
-      {show && (
-        <>
-          <div className="fixed inset-0 z-40" onClick={() => setShow(false)} />
-          <div className="absolute left-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-64">
-            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 border-b border-editor-border">
-              Choose a Template
-            </div>
-            {TEMPLATES.map((t) => (
-              <button key={t.id} onClick={() => onSelect(t.id)}
-                className="w-full text-left px-3 py-2 text-xs hover:bg-editor-hover flex items-start gap-2.5 transition-colors">
-                <span className="text-base leading-none mt-0.5">{t.icon}</span>
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium text-editor-text">{t.name}</div>
-                  <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
-                </div>
+    <button onClick={onClick}
+      className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-editor-bg border border-editor-border rounded-md hover:bg-editor-hover hover:border-editor-accent/60 transition-all ml-1"
+      title="Load a preset template">
+      <LayoutTemplate size={13} />
+      <span>Templates</span>
+    </button>
+  );
+}
+
+function WatermarkTrigger({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick}
+      className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-editor-bg border border-editor-border rounded-md hover:bg-editor-hover hover:border-editor-accent/60 transition-all ml-1"
+      title="Add watermark to current page">
+      <Droplets size={13} />
+      <span>Watermark</span>
+    </button>
+  );
+}
+
+// ----- Mini preview renderer (shows a scaled-down layout of the template) -----
+function TemplatePreview({ tpl }: { tpl: Template }) {
+  // Render a simplified snapshot of the first page using a fixed thumbnail size
+  const W = 220;
+  const H = 156; // ~A4 ratio for thumb
+
+  // We lazily build to avoid doing it for all 12 at once — but for a picker this is fine
+  const pages = tpl.build();
+  const page = pages[0];
+  const scaleX = W / page.width;
+  const scaleY = H / page.height;
+
+  return (
+    <div className="relative overflow-hidden rounded-md border border-editor-border"
+      style={{ width: W, height: H, background: page.background || '#FFFFFF' }}>
+      {page.elements.slice(0, 40).map((el: any, idx: number) => {
+        const x = el.x * scaleX;
+        const y = el.y * scaleY;
+        const w = el.width * scaleX;
+        const h = el.height * scaleY;
+        const common: React.CSSProperties = {
+          position: 'absolute', left: x, top: y, width: w, height: h,
+          opacity: el.opacity ?? 1,
+          transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+          transformOrigin: 'center',
+        };
+        if (el.type === 'shape') {
+          const bg = el.fill?.type === 'solid' ? el.fill.color : 'transparent';
+          const border = el.stroke && el.stroke.width && el.stroke.style !== 'none'
+            ? `${Math.max(0.5, el.stroke.width * scaleX)}px ${el.stroke.style} ${el.stroke.color}` : undefined;
+          return <div key={idx} style={{ ...common, background: bg, borderRadius: (el.borderRadius || 0) * scaleX, border }} />;
+        }
+        if (el.type === 'text' || el.type === 'documentBody') {
+          const fs = Math.max(3, (el.fontSize || 12) * scaleY * 0.7);
+          return (
+            <div key={idx} style={{
+              ...common,
+              color: el.color,
+              fontFamily: el.font || 'sans-serif',
+              fontWeight: el.fontWeight,
+              fontStyle: el.fontStyle,
+              fontSize: fs,
+              lineHeight: 1.15,
+              textAlign: el.align,
+              overflow: 'hidden',
+              whiteSpace: 'pre-wrap',
+              padding: 0,
+            }}>{el.content}</div>
+          );
+        }
+        if (el.type === 'table') {
+          return <div key={idx} style={{ ...common, background: '#F3F4F6', border: '0.5px solid #D1D5DB' }} />;
+        }
+        if (el.type === 'image') {
+          return <div key={idx} style={{ ...common, background: '#E2E8F0' }} />;
+        }
+        return null;
+      })}
+    </div>
+  );
+}
+
+function TemplateGallery({ onClose, onSelect }: {
+  onClose: () => void;
+  onSelect: (id: string) => void;
+}) {
+  const [category, setCategory] = useState<'all' | TemplateCategory>('all');
+  const [query, setQuery] = useState('');
+  const filtered = TEMPLATES.filter((t) => {
+    if (category !== 'all' && t.category !== category) return false;
+    if (query && !(t.name + ' ' + t.description).toLowerCase().includes(query.toLowerCase())) return false;
+    return true;
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      onClick={onClose}>
+      <div className="bg-editor-surface border border-editor-border rounded-xl shadow-2xl w-full max-w-5xl max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center gap-3 px-6 py-4 border-b border-editor-border">
+          <LayoutTemplate size={20} className="text-editor-accent" />
+          <div className="flex-1">
+            <h2 className="text-sm font-bold text-editor-text">Choose a Template</h2>
+            <p className="text-[11px] text-gray-400">Start from a preset and customize. Loading a template replaces the current document (you can undo with Ctrl+Z).</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-editor-hover text-gray-400 hover:text-editor-text">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Search + categories */}
+        <div className="flex items-center gap-3 px-6 py-3 border-b border-editor-border bg-editor-bg/40">
+          <div className="relative flex-1 max-w-xs">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search templates..."
+              className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded-md pl-7 pr-2 py-1.5 focus:border-editor-accent outline-none" />
+          </div>
+          <div className="flex items-center gap-1 flex-wrap">
+            {CATEGORIES.map((c) => (
+              <button key={c.id} onClick={() => setCategory(c.id)}
+                className={`px-2.5 py-1 text-[11px] rounded-md transition-all ${
+                  category === c.id
+                    ? 'bg-editor-accent text-white'
+                    : 'bg-editor-bg border border-editor-border text-editor-text hover:bg-editor-hover'
+                }`}>
+                {c.label}
               </button>
             ))}
           </div>
-        </>
-      )}
+        </div>
+
+        {/* Grid */}
+        <div className="flex-1 overflow-y-auto p-6">
+          {filtered.length === 0 ? (
+            <div className="text-center text-sm text-gray-500 py-12">No templates match your search.</div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {filtered.map((tpl) => (
+                <button key={tpl.id} onClick={() => onSelect(tpl.id)}
+                  className="group flex flex-col gap-2 p-2.5 bg-editor-bg border border-editor-border rounded-lg hover:border-editor-accent hover:shadow-lg hover:shadow-editor-accent/10 transition-all text-left">
+                  <TemplatePreview tpl={tpl} />
+                  <div className="flex items-start gap-2 pt-1">
+                    <span className="text-base leading-none mt-0.5 flex-shrink-0">{tpl.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <div className="font-semibold text-xs text-editor-text truncate">{tpl.name}</div>
+                        <span className="text-[9px] uppercase tracking-wider px-1.5 py-0.5 rounded-full"
+                          style={{ background: tpl.accent + '22', color: tpl.accent }}>
+                          {tpl.category}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{tpl.description}</div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WatermarkModal({ onClose, onApply }: {
+  onClose: () => void;
+  onApply: (text: string, color: string, opacity: number, fontSize: number, rotation: number) => void;
+}) {
+  const [text, setText] = useState('CONFIDENTIAL');
+  const [color, setColor] = useState('#DC2626');
+  const [opacity, setOpacity] = useState(0.12);
+  const [fontSize, setFontSize] = useState(110);
+  const [rotation, setRotation] = useState(-30);
+
+  const presets = [
+    { label: 'CONFIDENTIAL', color: '#DC2626' },
+    { label: 'DRAFT', color: '#94A3B8' },
+    { label: 'COPY', color: '#0F172A' },
+    { label: 'APPROVED', color: '#059669' },
+    { label: 'INTERNAL', color: '#D97706' },
+    { label: 'SAMPLE', color: '#7C3AED' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+      onClick={onClose}>
+      <div className="bg-editor-surface border border-editor-border rounded-xl shadow-2xl w-full max-w-md overflow-hidden"
+        onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-editor-border">
+          <Droplets size={18} className="text-editor-accent" />
+          <div className="flex-1">
+            <h2 className="text-sm font-bold text-editor-text">Add Watermark</h2>
+            <p className="text-[11px] text-gray-400">Adds rotated, semi-transparent text behind the current page.</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-md hover:bg-editor-hover text-gray-400 hover:text-editor-text">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="p-5 space-y-4">
+          {/* Preview */}
+          <div className="relative h-28 rounded-md bg-white border border-editor-border overflow-hidden flex items-center justify-center">
+            <div style={{
+              transform: `rotate(${rotation}deg)`,
+              color, opacity, fontSize: Math.min(fontSize * 0.4, 40),
+              fontWeight: 'bold',
+              textAlign: 'center',
+              whiteSpace: 'nowrap',
+            }}>{text || 'WATERMARK'}</div>
+            <div className="absolute inset-x-4 top-2 text-[9px] text-gray-300">preview</div>
+          </div>
+
+          {/* Presets */}
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 block mb-1.5">Quick Presets</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {presets.map((p) => (
+                <button key={p.label} onClick={() => { setText(p.label); setColor(p.color); }}
+                  className="px-2 py-1.5 text-[10px] bg-editor-bg border border-editor-border rounded hover:bg-editor-hover transition-all font-bold"
+                  style={{ color: p.color }}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Fields */}
+          <div className="space-y-2.5">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 block mb-1">Text</label>
+              <input type="text" value={text} onChange={(e) => setText(e.target.value)}
+                className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-2 py-1.5 focus:border-editor-accent outline-none" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 block mb-1">Color</label>
+                <div className="flex items-center gap-1">
+                  <input type="color" value={color} onChange={(e) => setColor(e.target.value)}
+                    className="w-7 h-7 cursor-pointer rounded border border-editor-border" />
+                  <input type="text" value={color} onChange={(e) => setColor(e.target.value)}
+                    className="flex-1 min-w-0 bg-editor-bg text-editor-text text-[11px] font-mono border border-editor-border rounded px-1.5 py-1 focus:border-editor-accent outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 block mb-1">Font Size</label>
+                <input type="number" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} min="20" max="300"
+                  className="w-full bg-editor-bg text-editor-text text-xs border border-editor-border rounded px-2 py-1.5 focus:border-editor-accent outline-none" />
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 block mb-1">
+                Opacity <span className="text-gray-500">({Math.round(opacity * 100)}%)</span>
+              </label>
+              <input type="range" min="0.02" max="0.5" step="0.01" value={opacity}
+                onChange={(e) => setOpacity(parseFloat(e.target.value))} className="w-full accent-purple-500" />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-gray-400 block mb-1">
+                Rotation <span className="text-gray-500">({rotation}°)</span>
+              </label>
+              <input type="range" min="-90" max="90" step="5" value={rotation}
+                onChange={(e) => setRotation(parseInt(e.target.value))} className="w-full accent-purple-500" />
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center gap-2 justify-end px-5 py-3 border-t border-editor-border bg-editor-bg/40">
+          <button onClick={onClose}
+            className="px-3 py-1.5 text-xs text-editor-text hover:bg-editor-hover rounded-md transition-all">Cancel</button>
+          <button onClick={() => onApply(text, color, opacity, fontSize, rotation)}
+            className="px-4 py-1.5 text-xs bg-editor-accent text-white rounded-md hover:bg-purple-600 transition-all font-medium flex items-center gap-1.5">
+            <Droplets size={12} /> Add Watermark
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

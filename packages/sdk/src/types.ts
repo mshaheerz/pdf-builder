@@ -96,6 +96,12 @@ export interface Point {
 // Elements
 // ============================================================================
 
+export type BlendMode =
+  | 'normal' | 'multiply' | 'screen' | 'overlay'
+  | 'darken' | 'lighten' | 'color-dodge' | 'color-burn'
+  | 'hard-light' | 'soft-light' | 'difference' | 'exclusion'
+  | 'hue' | 'saturation' | 'color' | 'luminosity';
+
 export interface BaseElement {
   id: string;
   type: string;
@@ -108,6 +114,7 @@ export interface BaseElement {
   locked: boolean;
   visible: boolean;
   name: string;
+  blendMode?: BlendMode;
 }
 
 export interface TextElement extends BaseElement {

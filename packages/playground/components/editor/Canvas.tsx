@@ -1096,6 +1096,9 @@ export function Canvas() {
       if (!el.visible) continue;
       ctx.save();
       ctx.globalAlpha = el.opacity;
+      if (el.blendMode && el.blendMode !== 'normal') {
+        ctx.globalCompositeOperation = el.blendMode as GlobalCompositeOperation;
+      }
 
       if (el.rotation) {
         ctx.translate(el.x + el.width / 2, el.y + el.height / 2);

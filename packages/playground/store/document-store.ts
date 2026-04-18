@@ -7,6 +7,7 @@ import type {
   ImageElement, TableElement, DrawingElement, DocumentBodyElement,
   Element, Page, TextSpan,
   HeaderFooterConfig, PageNumberConfig, PageNumberPosition, PageNumberFormat,
+  BlendMode,
 } from '@pdf-builder/sdk';
 
 export type {
@@ -15,6 +16,7 @@ export type {
   ImageElement, TableElement, DrawingElement, DocumentBodyElement,
   Element, Page, TextSpan,
   HeaderFooterConfig, PageNumberConfig, PageNumberPosition, PageNumberFormat,
+  BlendMode,
 };
 
 // ============================================================================
