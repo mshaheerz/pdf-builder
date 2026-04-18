@@ -1,6 +1,10 @@
 {
   "name": "pdf-builder",
   "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build:core": "cd packages/wasm && wasm-pack build --target web --out-dir pkg",
     "build:sdk": "cd packages/sdk && pnpm build",
