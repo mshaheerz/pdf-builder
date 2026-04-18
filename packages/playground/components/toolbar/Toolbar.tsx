@@ -3,6 +3,7 @@
 import { useDocumentStore, generateId, type EditorTool, type ShapeType, type TextSpan } from '@/store/document-store';
 import { useCallback, useState } from 'react';
 import { exportPdfWasm, exportPdfClient, resolveImagesInJson } from '@/lib/pdf-export';
+import { TEMPLATES } from '@/lib/templates';
 import { applyStyle, getPlainText, offsetToSpanPos, resolveSpanStyle, getParagraphRange, insertText as spanInsertText } from '@/store/span-utils';
 import { resolveVariables } from '@/store/variable-utils';
 import {
@@ -14,6 +15,7 @@ import {
   Upload, Link2,
   ChevronDown,
   Braces,
+  LayoutTemplate,
 } from 'lucide-react';
 
 /** Prevent toolbar interactions from stealing focus away from canvas */
@@ -186,7 +188,7 @@ export function Toolbar() {
     brushSize, setBrushSize, zoom, setZoom,
     activePage, addElement, addPage, pages,
     undo, redo, pushHistory, exportToJson, getNextYPosition,
-    editorMode, setEditorMode,
+    editorMode, setEditorMode, loadTemplate,
     selectedIds, updateElement,
     editingSelectionStart, editingSelectionEnd, editingCursorPos,
     pendingStyle, setPendingStyle,
@@ -198,6 +200,7 @@ export function Toolbar() {
   const [imageUrlValue, setImageUrlValue] = useState('');
   const [showImageUrlInput, setShowImageUrlInput] = useState(false);
   const [showVariableMenu, setShowVariableMenu] = useState(false);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
   const isTextEditorMode = editorMode === 'textEditor';
 
@@ -319,6 +322,19 @@ export function Toolbar() {
     input.click();
     setShowExportMenu(false);
   }, []);
+
+  const handleLoadTemplate = useCallback((templateId: string) => {
+    const tpl = TEMPLATES.find((t) => t.id === templateId);
+    if (!tpl) return;
+    const state = useDocumentStore.getState();
+    const hasContent = state.pages.some((p) => p.elements.length > 0);
+    if (hasContent) {
+      const ok = window.confirm(`Load "${tpl.name}" template? This will replace the current document. You can undo this with Ctrl+Z.`);
+      if (!ok) { setShowTemplateMenu(false); return; }
+    }
+    loadTemplate(tpl.build());
+    setShowTemplateMenu(false);
+  }, [loadTemplate]);
 
   // ---- Rich text helpers ----
   const hasSelection = editingSelectionStart !== null && editingSelectionEnd !== null && editingSelectionStart !== editingSelectionEnd;
@@ -552,6 +568,11 @@ export function Toolbar() {
 
           <div className="w-px h-6 bg-editor-border mx-1" />
 
+          {/* Templates */}
+          <TemplateMenu show={showTemplateMenu} setShow={setShowTemplateMenu} onSelect={handleLoadTemplate} />
+
+          <div className="w-px h-6 bg-editor-border mx-1" />
+
           {/* Undo/Redo */}
           <button onClick={undo} className={`${iconBtn} ${iconBtnNormal}`} title="Undo (Ctrl+Z)"><Undo2 size={14} /></button>
           <button onClick={redo} className={`${iconBtn} ${iconBtnNormal}`} title="Redo (Ctrl+Y)"><Redo2 size={14} /></button>
@@ -588,6 +609,10 @@ export function Toolbar() {
         <button className="px-3 py-1.5 text-xs bg-editor-accent text-white transition-all cursor-default" title="Design mode (active)">Design</button>
         <button onClick={() => setEditorMode('textEditor')} className="px-3 py-1.5 text-xs bg-editor-bg text-editor-text hover:bg-editor-hover transition-all" title="Switch to Text Editor mode">Text Editor</button>
       </div>
+
+      {/* Templates */}
+      <TemplateMenu show={showTemplateMenu} setShow={setShowTemplateMenu} onSelect={handleLoadTemplate} />
+
       <div className="w-px h-6 bg-editor-border mr-1" />
 
       {/* Tool buttons */}
@@ -771,6 +796,45 @@ function ExportMenu({ showExportMenu, setShowExportMenu, handleExportPdfWasm, ha
             <button onClick={handleLoadJson} className="w-full text-left px-4 py-2 text-xs hover:bg-editor-hover flex items-center gap-2">
               <FileUp size={13} className="text-green-400" /> Load JSON file
             </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// Template Menu
+// ============================================================================
+function TemplateMenu({ show, setShow, onSelect }: {
+  show: boolean; setShow: (v: boolean) => void; onSelect: (id: string) => void;
+}) {
+  return (
+    <div className="relative">
+      <button onClick={() => setShow(!show)}
+        className="flex items-center gap-1 px-2.5 py-1.5 text-xs bg-editor-bg border border-editor-border rounded-md hover:bg-editor-hover transition-all ml-1"
+        title="Load a preset template">
+        <LayoutTemplate size={13} />
+        <span>Templates</span>
+        <ChevronDown size={10} className="text-gray-400" />
+      </button>
+      {show && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setShow(false)} />
+          <div className="absolute left-0 top-full mt-1 bg-editor-surface border border-editor-border rounded-lg shadow-xl z-50 py-1 w-64">
+            <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-gray-400 border-b border-editor-border">
+              Choose a Template
+            </div>
+            {TEMPLATES.map((t) => (
+              <button key={t.id} onClick={() => onSelect(t.id)}
+                className="w-full text-left px-3 py-2 text-xs hover:bg-editor-hover flex items-start gap-2.5 transition-colors">
+                <span className="text-base leading-none mt-0.5">{t.icon}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-editor-text">{t.name}</div>
+                  <div className="text-[10px] text-gray-500 truncate">{t.description}</div>
+                </div>
+              </button>
+            ))}
           </div>
         </>
       )}

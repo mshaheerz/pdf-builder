@@ -87,6 +87,7 @@ interface DocumentState {
   pushHistory: () => void;
   exportToJson: () => string;
   loadFromJson: (json: string) => void;
+  loadTemplate: (pages: Page[]) => void;
   getNextYPosition: (pageIndex: number) => number;
   ensureDocumentBody: (pageIndex: number) => string;
   movePage: (from: number, to: number) => void;
@@ -307,6 +308,36 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     } catch (e) {
       console.error('Failed to load document:', e);
     }
+  },
+
+  loadTemplate: (pages: Page[]) => {
+    // Push current state to history so user can undo
+    const state = get();
+    const newHistory = state.history.slice(0, state.historyIndex + 1);
+    newHistory.push(JSON.parse(JSON.stringify(state.pages)));
+    if (newHistory.length > 50) newHistory.shift();
+
+    // Deep-clone + regenerate IDs so templates don't collide on repeated loads
+    const cloned: Page[] = JSON.parse(JSON.stringify(pages)).map((p: Page) => ({
+      ...p,
+      id: generateId(),
+      elements: p.elements.map((el) => ({ ...el, id: generateId() })),
+    }));
+
+    set({
+      pages: cloned,
+      activePage: 0,
+      selectedIds: [],
+      editingTextId: null,
+      editingTableId: null,
+      editingSelectionStart: null,
+      editingSelectionEnd: null,
+      pendingStyle: null,
+      editorMode: 'design',
+      activeTool: 'select',
+      history: newHistory,
+      historyIndex: newHistory.length - 1,
+    });
   },
 
   ensureDocumentBody: (pageIndex: number) => {
