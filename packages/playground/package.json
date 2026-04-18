@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node ../../scripts/ensure-wasm-package.mjs && NEXT_PRIVATE_SKIP_LOCKFILE_PATCH=1 next dev",
-    "build": "node ../../scripts/ensure-wasm-package.mjs && NEXT_PRIVATE_SKIP_LOCKFILE_PATCH=1 next build",
+    "dev": "npm --prefix ../sdk run build && node ../../scripts/ensure-wasm-package.mjs && NEXT_PRIVATE_SKIP_LOCKFILE_PATCH=1 next dev",
+    "build": "npm --prefix ../sdk run build && node ../../scripts/ensure-wasm-package.mjs && NEXT_PRIVATE_SKIP_LOCKFILE_PATCH=1 next build",
     "start": "next start"
   },
   "dependencies": {
