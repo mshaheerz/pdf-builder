@@ -1,16 +1,20 @@
 {
   "name": "pdf-builder",
   "private": true,
-  "packageManager": "pnpm@9.15.0",
+  "workspaces": [
+    "packages/sdk",
+    "packages/playground",
+    "packages/node-binding"
+  ],
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
     "build:core": "cd packages/wasm && wasm-pack build --target web --out-dir pkg",
-    "build:sdk": "cd packages/sdk && pnpm build",
-    "build:playground": "cd packages/playground && pnpm build",
-    "dev": "cd packages/playground && pnpm dev",
-    "build": "pnpm --filter @pdf-builder/sdk build && pnpm --filter @pdf-builder/playground build"
+    "build:sdk": "npm run build -w @pdf-builder/sdk",
+    "build:playground": "npm run build -w @pdf-builder/playground",
+    "dev": "npm run dev -w @pdf-builder/playground",
+    "build": "npm run build -w @pdf-builder/sdk && npm run build -w @pdf-builder/playground"
   },
   "devDependencies": {}
 }
