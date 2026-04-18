@@ -1,0 +1,15 @@
+{
+  "name": "pdf-builder-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "pdf_builder_wasm_bg.wasm",
+    "pdf_builder_wasm.js",
+    "pdf_builder_wasm.d.ts"
+  ],
+  "main": "pdf_builder_wasm.js",
+  "types": "pdf_builder_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
