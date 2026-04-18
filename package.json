@@ -10,11 +10,12 @@
     "node": ">=20.0.0"
   },
   "scripts": {
+    "ensure:wasm": "node scripts/ensure-wasm-package.mjs",
     "build:core": "cd packages/wasm && wasm-pack build --target web --out-dir pkg",
     "build:sdk": "npm run build -w @pdf-builder/sdk",
-    "build:playground": "npm run build -w @pdf-builder/playground",
-    "dev": "npm run dev -w @pdf-builder/playground",
-    "build": "npm run build -w @pdf-builder/sdk && npm run build -w @pdf-builder/playground"
+    "build:playground": "npm run ensure:wasm && npm run build -w @pdf-builder/playground",
+    "dev": "npm run ensure:wasm && npm run dev -w @pdf-builder/playground",
+    "build": "npm run ensure:wasm && npm run build -w @pdf-builder/sdk && npm run build -w @pdf-builder/playground"
   },
   "devDependencies": {}
 }

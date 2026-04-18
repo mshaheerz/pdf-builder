@@ -5,3 +5,9 @@ dist/
 pkg/
 *.node
 .turbo/
+!packages/wasm/pkg/
+!packages/wasm/pkg/package.json
+!packages/wasm/pkg/pdf_builder_wasm.d.ts
+!packages/wasm/pkg/pdf_builder_wasm.js
+!packages/wasm/pkg/pdf_builder_wasm_bg.wasm
+!packages/wasm/pkg/pdf_builder_wasm_bg.wasm.d.ts
